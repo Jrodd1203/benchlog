@@ -16,7 +16,8 @@ from benchlog.core.board import TEMPLATES
 from benchlog.core.models import Circuit, Hole, Observation, ObservationKind, ObservationStatus
 from benchlog.core.pairing import apply_observations
 from benchlog.core.repo import Commit, GitError, Repo
-from benchlog.core.scan import ScanStore
+from benchlog.core.scan import BoardReading, MisreadError, ScanStore
+from benchlog.core.scan import scan as run_scan
 from benchlog.core.serialize import dump
 
 CIRCUIT_PATH = Path("benchlog/circuit.json")
@@ -104,6 +105,24 @@ class Project:
     def pending_observations(self) -> list[Observation]:
         return [o for o in self.observations() if o.status == ObservationStatus.PENDING]
 
+    def scan(self, reading: BoardReading, sync: bool = False) -> list[Observation]:
+        """Record a board reading and save the changes it implies as pending observations.
+
+        With `sync`, the reading becomes the reference (the board matches the circuit) and
+        nothing is proposed.
+        """
+        if sync:
+            self.scans.save_latest(reading)
+            self.scans.promote_latest()
+            self.save_observations([])
+            return []
+        try:
+            observations = run_scan(self.load_circuit(), self.scans, reading, self.pending_observations())
+        except MisreadError as e:
+            raise ProjectError(str(e)) from e
+        self.save_observations(observations)
+        return observations
+
     def _select_pending(self, ids: list[str] | None) -> tuple[list[Observation], list[Observation]]:
         """(all observations, the pending ones named by `ids`, or every pending one if None)."""
         observations = self.observations()
@@ -115,11 +134,13 @@ class Project:
             raise ProjectError(f"no pending observation {', '.join(unknown)}")
         return observations, [pending[i] for i in dict.fromkeys(ids)]
 
-    def _set_status(self, observations: list[Observation], chosen: list[Observation], status: ObservationStatus) -> None:
-        chosen_ids = {o.id for o in chosen}
-        self.save_observations(
-            [o.model_copy(update={"status": status}) if o.id in chosen_ids else o for o in observations]
-        )
+    def _set_status(
+        self, observations: list[Observation], chosen: list[Observation], status: ObservationStatus
+    ) -> list[Observation]:
+        """Save `chosen` with a new status; returns them as saved."""
+        updated = {o.id: o.model_copy(update={"status": status}) for o in chosen}
+        self.save_observations([updated.get(o.id, o) for o in observations])
+        return list(updated.values())
 
     def accept_observations(self, ids: list[str] | None = None) -> list[Observation]:
         """Apply pending observations to the circuit. All or nothing: if one can't be applied, none are."""
@@ -129,13 +150,11 @@ class Project:
         except ValueError as e:
             raise ProjectError(str(e)) from e
         self.save_circuit(circuit)
-        self._set_status(observations, chosen, ObservationStatus.ACCEPTED)
-        return chosen
+        return self._set_status(observations, chosen, ObservationStatus.ACCEPTED)
 
     def reject_observations(self, ids: list[str] | None = None) -> list[Observation]:
         observations, chosen = self._select_pending(ids)
-        self._set_status(observations, chosen, ObservationStatus.REJECTED)
-        return chosen
+        return self._set_status(observations, chosen, ObservationStatus.REJECTED)
 
     def edit_observation(self, obs_id: str, ends: dict[str, Hole]) -> Observation:
         """Set or correct wire ends of a pending added/moved wire, e.g. {"b": "J40"}.
