@@ -882,6 +882,82 @@ select {
   color: #86ade6;
 }
 
+/* Light-mode overrides for the hero code panel and CLI commands panel.
+   Dark mode keeps the hardcoded near-black values above; light mode
+   swaps them for the existing design tokens (cream surface, drafting-blue). */
+@media (prefers-color-scheme: light) {
+  .hero-code-panel {
+    background: var(--surface);
+    border-color: var(--border);
+  }
+
+  .hero-code-tabbar {
+    background: var(--surface-2);
+    border-bottom-color: var(--rule);
+  }
+
+  .hero-code-tab {
+    color: var(--muted);
+  }
+
+  .hero-code-tab:hover {
+    color: var(--text);
+  }
+
+  .hero-code-tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
+  .term-lnum {
+    color: var(--rule);
+    border-right-color: var(--border);
+  }
+
+  .term-text {
+    color: var(--text);
+  }
+
+  .term-prompt {
+    color: var(--accent);
+  }
+
+  .term-ok {
+    color: var(--ok);
+  }
+
+  .term-bad {
+    color: var(--bad);
+  }
+
+  .term-warn {
+    color: var(--warn);
+  }
+
+  .term-comment {
+    color: var(--muted);
+  }
+
+  .commands-panel {
+    background: var(--surface);
+    border-color: var(--border);
+  }
+
+  .commands-panel-header {
+    background: var(--surface-2);
+    border-bottom-color: var(--rule);
+    color: var(--text);
+  }
+
+  .commands-body {
+    color: var(--muted);
+  }
+
+  .cmd-name {
+    color: var(--accent);
+  }
+}
+
 @media (max-width: 760px) {
   .workspace {
     grid-template-columns: 1fr;
