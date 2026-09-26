@@ -34,7 +34,17 @@ npm install
 npm run dev                  # proxies /api to http://127.0.0.1:8000
 ```
 
-Run the API with `benchlog serve`.
+Run the API with `benchlog serve` from inside a project (the web UI's dev server forwards `/api` to
+it). API docs are at http://localhost:8000/docs.
+
+```sh
+benchlog serve                         # the project containing this folder, on localhost:8000
+benchlog serve --project ~/my-board    # a project somewhere else
+benchlog serve --host 0.0.0.0          # reachable from other devices on the network (no login!)
+benchlog serve --reload                # restart on code changes while developing benchlog itself
+```
+
+Auto-reload is off by default: a restart also drops the ESP32 connection.
 
 ## Scanning from the bench camera
 

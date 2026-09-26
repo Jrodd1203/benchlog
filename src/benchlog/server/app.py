@@ -23,6 +23,7 @@ from benchlog.core.reconcile import Reconciliation
 from benchlog.core.repo import Commit, GitError
 from benchlog.core.scan import reading_from_circuit
 from benchlog.serial.service import SerialSnapshot
+from benchlog.server.check_routes import router as check_router
 from benchlog.server.serial_routes import router as serial_router
 from benchlog.server.serial_routes import serial_service
 
@@ -36,6 +37,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="benchlog", lifespan=lifespan)
 app.include_router(serial_router)
+app.include_router(check_router)
 
 
 @app.exception_handler(ProjectError)

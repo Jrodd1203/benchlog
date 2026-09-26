@@ -599,8 +599,40 @@ def schema(output: Path | None = typer.Option(None, "-o", "--output", help="Writ
 
 
 @app.command()
-def serve(port: int = 8000) -> None:
+@_handle_errors
+def serve(
+    port: int = typer.Option(8000, help="Port to listen on."),
+    host: str = typer.Option(
+        "127.0.0.1", help="Address to listen on; 0.0.0.0 makes it reachable from other devices on the network."
+    ),
+    project_dir: Path | None = typer.Option(
+        None, "--project", help="benchlog project to serve (default: the one containing the current folder)."
+    ),
+    reload: bool = typer.Option(
+        False, "--reload/--no-reload", help="Restart when benchlog's code changes (development; drops the ESP32 link)."
+    ),
+) -> None:
     """Start the local API for the web UI (needs the `server` extra)."""
-    import uvicorn
+    try:
+        import uvicorn
+    except ImportError as e:
+        raise ProjectError("the API needs the server extra (install with `pip install -e '.[server]'`)") from e
+    import os
 
-    uvicorn.run("benchlog.server.app:app", host="127.0.0.1", port=port, reload=True)
+    import benchlog
+
+    project = Project.find(project_dir.resolve() if project_dir else None)
+    # The app finds the project per request through this, in this process and in reload workers.
+    os.environ["BENCHLOG_PROJECT"] = str(project.repo.root)
+    shown = "localhost" if host in ("127.0.0.1", "localhost") else host
+    print(f"serving [bold]{escape(str(project.repo.root))}[/bold] at http://{shown}:{port} (API docs: /docs)")
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        print("[yellow]warning:[/yellow] reachable from other devices on this network, with no login")
+    uvicorn.run(
+        "benchlog.server.app:app",
+        host=host,
+        port=port,
+        reload=reload,
+        # Only benchlog's own code; scans and commits write project files that mustn't trigger restarts.
+        reload_dirs=[str(Path(benchlog.__file__).parent)] if reload else None,
+    )
