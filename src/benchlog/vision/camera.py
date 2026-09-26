@@ -87,14 +87,18 @@ class _Steadiness:
     last_motion_image: np.ndarray | None = None
     seen_board: bool = False
 
-    def update(self, frame: np.ndarray, corners: np.ndarray | None, now: float) -> float:
-        """Seconds the board has been steady as of this frame (0 if it isn't)."""
+    def update(self, frame: np.ndarray, corners: np.ndarray | None, now: float, fixed: bool = False) -> float:
+        """Seconds the board has been steady as of this frame (0 if it isn't).
+
+        `fixed` means `corners` is a known board area (from a calibration) rather than this frame's
+        detection, so only motion inside it counts, not detection wobble.
+        """
         motion_image = _motion_image(frame)
         steady = False
         if corners is not None:
             self.seen_board = True
             if self.last_corners is not None and self.last_motion_image is not None:
-                jitter = float(np.max(np.linalg.norm(corners - self.last_corners, axis=1)))
+                jitter = 0.0 if fixed else float(np.max(np.linalg.norm(corners - self.last_corners, axis=1)))
                 motion = board_motion(self.last_motion_image, motion_image, corners, frame.shape[1])
                 steady = jitter < MAX_CORNER_JITTER_PX and motion < MAX_BOARD_MOTION
         self.last_corners, self.last_motion_image = corners, motion_image
@@ -111,13 +115,22 @@ def grab_steady_frame(
     timeout: float = 10.0,
     steady_for: float = 1.0,
     clock: Callable[[], float] = time.monotonic,
+    board_corners: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Wait until the board is in view and still for `steady_for` seconds, then return that frame."""
+    """Wait until the board is in view and still for `steady_for` seconds, then return that frame.
+
+    With `board_corners` (the calibrated board area), stillness is judged only from motion in that
+    area; the board outline isn't re-detected, so a wobbly detection can't block the scan.
+    """
     tracker = _Steadiness()
     deadline = clock() + timeout
     while clock() < deadline:
         frame = read_frame(cap)
-        if tracker.update(frame, detect_board_downscaled(frame), clock()) >= steady_for:
+        if board_corners is not None:
+            steady = tracker.update(frame, board_corners, clock(), fixed=True)
+        else:
+            steady = tracker.update(frame, detect_board_downscaled(frame), clock())
+        if steady >= steady_for:
             return frame
     if not tracker.seen_board:
         raise CameraError(
@@ -162,32 +175,39 @@ def preview(cap: cv2.VideoCapture, calibration=None, window: str = "benchlog cam
     from benchlog.vision.calibration import CalibrationError, draw_holes, track
 
     tracker = _Steadiness()
-    holes, lock_status, last_track = None, "", float("-inf")
+    holes, outline, lock_status, last_track, matrix = None, None, "", float("-inf"), None
     try:
         while True:
             frame = read_frame(cap)
             now = time.monotonic()
-            corners = detect_board_downscaled(frame)
-            steady = tracker.update(frame, corners, now)
             display = frame.copy()
-            if calibration is not None and now - last_track > 0.3:
-                last_track = now
-                try:
-                    tracking = track(calibration, frame)
-                    holes = tracking.apply(calibration.holes)
-                    lock_status = f"locked (match {tracking.correlation:.2f}, moved {tracking.shift_px:.0f} px)"
-                except CalibrationError as e:
-                    holes, lock_status = None, f"lock lost: {e}"
+            if calibration is None:
+                outline = detect_board_downscaled(frame)
+                steady = tracker.update(frame, outline, now)
+            else:
+                if now - last_track > 0.3:
+                    last_track = now
+                    try:
+                        tracking = track(calibration, frame, start=matrix)
+                        matrix = tracking.matrix
+                        holes = tracking.apply(calibration.holes)
+                        outline = cv2.transform(calibration.corners.reshape(-1, 1, 2), matrix).reshape(-1, 2)
+                        lock_status = f"locked (match {tracking.correlation:.2f}, moved {tracking.shift_px:.0f} px)"
+                    except CalibrationError as e:
+                        holes, outline, matrix, lock_status = None, None, None, f"lock lost: {e}"
+                steady = tracker.update(frame, calibration.corners, now, fixed=True)
             if holes is not None:
                 draw_holes(display, holes)
-            if corners is None:
+            if calibration is not None and holes is None:
+                status, color = "board not locked", (0, 0, 255)
+            elif outline is None:
                 status, color = "no board in view", (0, 0, 255)
             elif steady >= 1.0:
                 status, color = "board steady: ready to scan", (0, 200, 0)
             else:
-                status, color = "board found: hold still", (0, 200, 255)
-            if corners is not None:
-                cv2.polylines(display, [corners.astype(np.int32)], True, color, 3)
+                status, color = "hold still", (0, 200, 255)
+            if outline is not None:
+                cv2.polylines(display, [np.asarray(outline).astype(np.int32)], True, color, 3)
             for i, text in enumerate(t for t in (status, lock_status) if t):
                 cv2.putText(display, text, (30, 60 + 50 * i), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 0, 0), 6)
                 cv2.putText(display, text, (30, 60 + 50 * i), cv2.FONT_HERSHEY_SIMPLEX, 1.3, color, 3)

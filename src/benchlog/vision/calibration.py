@@ -45,6 +45,7 @@ _BOARD_MM = np.float32([[0, 0], [BOARD_W_MM, 0], [BOARD_W_MM, BOARD_H_MM], [0, B
 
 # Tracking
 MIN_TRACKING_CORRELATION = 0.6  # ECC correlation below this means the lock is lost
+GOOD_TRACKING_CORRELATION = 0.9  # good enough to stop trying other starting points
 MAX_TRACKED_MOVE_FRACTION = 0.25  # of the board's width; beyond this, recalibrate
 _ECC_SCALES = (0.125, 0.25, 0.5)  # coarse to fine; the coarsest blurs out the (periodic) hole grid
 
@@ -168,27 +169,11 @@ def _gray(img: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
 
 
-def track(cal: Calibration, frame: np.ndarray) -> Tracking:
-    """How the board moved since calibration (a rotation + shift; the camera height is fixed)."""
-    if frame.shape[:2] != cal.reference.shape[:2]:
-        raise CalibrationError(
-            f"camera resolution changed ({frame.shape[1]}x{frame.shape[0]}, calibrated at "
-            f"{cal.frame_size[0]}x{cal.frame_size[1]}); run `benchlog camera calibrate`"
-        )
-    # Rough start from the board outline (handles bigger moves), refined below.
-    matrix = np.eye(2, 3, dtype=np.float32)
-    detected = detect_board_downscaled(frame)
-    if detected is not None:
-        estimate, _ = cv2.estimateAffinePartial2D(cal.corners, detected)
-        if estimate is not None:
-            angle = np.arctan2(estimate[1, 0], estimate[0, 0])
-            c, s = np.cos(angle), np.sin(angle)
-            matrix = np.float32([[c, -s, estimate[0, 2]], [s, c, estimate[1, 2]]])
-
-    ref_gray, cur_gray = _gray(cal.reference), _gray(frame)
+def _ecc(cal: Calibration, ref_gray: np.ndarray, cur_gray: np.ndarray, start: np.ndarray) -> tuple[np.ndarray, float]:
+    """Refine a starting rotation+shift by aligning the images, coarse to fine."""
     mask = cv2.dilate(_board_mask(ref_gray.shape, cal.corners), np.ones((15, 15), np.uint8))
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 100, 1e-5)
-    correlation = 0.0
+    matrix, correlation = start.astype(np.float32).copy(), 0.0
     for scale in _ECC_SCALES:
         size = (max(8, round(ref_gray.shape[1] * scale)), max(8, round(ref_gray.shape[0] * scale)))
         ref_s = cv2.resize(ref_gray, size, interpolation=cv2.INTER_AREA)
@@ -196,25 +181,62 @@ def track(cal: Calibration, frame: np.ndarray) -> Tracking:
         mask_s = cv2.resize(mask, size, interpolation=cv2.INTER_NEAREST)
         scaled = matrix.copy()
         scaled[:, 2] *= scale
-        try:
-            correlation, scaled = cv2.findTransformECC(
-                ref_s, cur_s, scaled, cv2.MOTION_EUCLIDEAN, criteria, mask_s, 5
-            )
-        except cv2.error as e:
-            raise CalibrationError("lost the board: can't line it up with the calibration; recalibrate") from e
+        correlation, scaled = cv2.findTransformECC(ref_s, cur_s, scaled, cv2.MOTION_EUCLIDEAN, criteria, mask_s, 5)
         matrix = scaled.copy()
         matrix[:, 2] /= scale
+    return matrix, float(correlation)
 
-    tracking = Tracking(matrix=matrix, correlation=float(correlation))
-    board_w = float(np.linalg.norm(cal.corners[1] - cal.corners[0]))
-    if tracking.correlation < MIN_TRACKING_CORRELATION:
+
+def _outline_estimate(cal: Calibration, frame: np.ndarray) -> np.ndarray | None:
+    """Rotation+shift from the calibrated corners to the board outline detected in `frame`."""
+    detected = detect_board_downscaled(frame)
+    if detected is None:
+        return None
+    estimate, _ = cv2.estimateAffinePartial2D(cal.corners, detected)
+    if estimate is None:
+        return None
+    angle = np.arctan2(estimate[1, 0], estimate[0, 0])
+    c, s = np.cos(angle), np.sin(angle)
+    return np.float32([[c, -s, estimate[0, 2]], [s, c, estimate[1, 2]]])
+
+
+def track(cal: Calibration, frame: np.ndarray, start: np.ndarray | None = None) -> Tracking:
+    """How the board moved since calibration (a rotation + shift; the camera height is fixed).
+
+    Tries, in order: `start` (e.g. the last tracked position), "hasn't moved", and only then the
+    board outline detected in this frame, which can wobble on faint board edges.
+    """
+    if frame.shape[:2] != cal.reference.shape[:2]:
         raise CalibrationError(
-            f"can't lock onto the board (match {tracking.correlation:.2f}); check nothing is covering "
-            "it, or run `benchlog camera calibrate`"
+            f"camera resolution changed ({frame.shape[1]}x{frame.shape[0]}, calibrated at "
+            f"{cal.frame_size[0]}x{cal.frame_size[1]}); run `benchlog camera calibrate`"
         )
-    if tracking.shift_px > MAX_TRACKED_MOVE_FRACTION * board_w:
+    ref_gray, cur_gray = _gray(cal.reference), _gray(frame)
+    starts = ([start] if start is not None else []) + [np.eye(2, 3, dtype=np.float32), None]
+    best: Tracking | None = None
+    for candidate in starts:
+        if candidate is None:
+            candidate = _outline_estimate(cal, frame)  # only computed if the others didn't lock
+            if candidate is None:
+                continue
+        try:
+            matrix, correlation = _ecc(cal, ref_gray, cur_gray, candidate)
+        except cv2.error:
+            continue
+        if best is None or correlation > best.correlation:
+            best = Tracking(matrix=matrix, correlation=correlation)
+        if correlation >= GOOD_TRACKING_CORRELATION:
+            break
+
+    if best is None or best.correlation < MIN_TRACKING_CORRELATION:
+        match = f" (match {best.correlation:.2f})" if best else ""
+        raise CalibrationError(
+            f"can't lock onto the board{match}; check nothing is covering it, or run `benchlog camera calibrate`"
+        )
+    board_w = float(np.linalg.norm(cal.corners[1] - cal.corners[0]))
+    if best.shift_px > MAX_TRACKED_MOVE_FRACTION * board_w:
         raise CalibrationError("the board moved too far since calibration; run `benchlog camera calibrate`")
-    return tracking
+    return best
 
 
 # ── Classification ────────────────────────────────────────────────────────────
@@ -276,7 +298,9 @@ _NUDGE = {
     2490368: (0, -1), 2621440: (0, 1), 2424832: (-1, 0), 2555904: (1, 0),  # Windows
 }  # fmt: skip
 _GRAB_RADIUS_PX = 40
-SNAP_INTERVAL_S = 0.5  # how often auto mode re-fits the grid onto the holes
+SNAP_INTERVAL_S = 0.5  # how often auto mode re-fits the grid onto the holes (until locked)
+SMOOTHING = 0.2  # how far the corners follow each new detection (1 = no smoothing)
+SMOOTH_JUMP_PX = 15  # bigger jumps are real moves: take them immediately
 
 
 @dataclass
@@ -299,12 +323,15 @@ class CalibrationEditor:
     message: str = ""
 
     def update(self, frame: np.ndarray, now: float) -> None:
-        if self.auto:
+        if self.auto and not self.locked:  # once locked, stop following the (wobbly) detector
             corners = detect_board_downscaled(frame)
             if corners is None:
                 self.message = "no board detected: drag the corner handles onto it"
                 return
-            self.corners = np.asarray(corners, dtype=np.float32)
+            corners = np.asarray(corners, dtype=np.float32)
+            if self.corners is not None and np.abs(corners - self.corners).max() < SMOOTH_JUMP_PX:
+                corners = self.corners + SMOOTHING * (corners - self.corners)  # damp frame-to-frame wobble
+            self.corners = corners
             if self.holes is None or now - self.last_snap >= SNAP_INTERVAL_S:
                 self.snap(frame, now)
         elif self.needs_snap and not self.dragging:
@@ -352,8 +379,8 @@ class CalibrationEditor:
                 self.message = "no hole map yet: wait for the board or drag the corner handles"
                 return None
             return "save"
-        if key == ord("a"):
-            self.auto, self.message = True, ""
+        if key == ord("a"):  # follow the detected board again
+            self.auto, self.locked, self.message = True, False, ""
         elif key in (ord("1"), ord("2"), ord("3"), ord("4")):
             self.selected = key - ord("1")
         elif key in _NUDGE and self.corners is not None:
@@ -393,7 +420,7 @@ def render(editor: CalibrationEditor, frame: np.ndarray) -> np.ndarray:
     lock = f"LOCKED on holes ({editor.residual:.1f} px)" if editor.locked else "placed by hand" if not editor.auto else "not locked"
     lines = [
         f"{mode} - {lock}. Check every dot sits in a hole, then press Enter",
-        "drag corner handles, or 1-4 + arrows/ijkl to nudge   f: snap now   a: auto   Enter: save   Esc: cancel",
+        "drag corner handles, or 1-4 + arrows/ijkl to nudge   f: snap now   a: re-detect board   Enter: save   Esc: cancel",
     ]
     if editor.message:
         lines.append(editor.message)

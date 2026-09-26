@@ -191,13 +191,21 @@ def test_scan_uses_the_calibration(cal: cal_mod.Calibration, tmp_path: Path, mon
         def release(self) -> None:
             pass
 
+    grabbed_with = {}
+
+    def fake_grab(cap, timeout, board_corners=None):
+        grabbed_with["corners"] = board_corners
+        return frame
+
     monkeypatch.setattr(camera, "open_camera", lambda index: FakeCapture())
-    monkeypatch.setattr(camera, "grab_steady_frame", lambda cap, timeout: frame)
+    monkeypatch.setattr(camera, "grab_steady_frame", fake_grab)
 
     result = CliRunner(env={"COLUMNS": "200"}).invoke(app, ["scan"])
     assert result.exit_code == 0, result.output
     assert "added wire" in result.output and "A40, A45" in result.output
     assert "no calibration saved" not in result.output
+    # Stillness was judged on the calibrated board area, not a fresh (wobbly) detection.
+    assert np.allclose(grabbed_with["corners"], cal.corners)
 
 
 @pytest.mark.parametrize("degrees, dx, dy", [(1.5, 25, -12), (-3.0, -40, 30)])
@@ -218,3 +226,56 @@ def test_clear_board_tracks_and_classifies(degrees: float, dx: float, dy: float)
     wires = {"A4": (0, 200, 255), "A12": (0, 200, 255), "F21": (0, 0, 200), "R-15": (25, 25, 25)}
     frame = cv2.convertScaleAbs(plug(frame, tracking.apply(clear.holes), wires), alpha=0.85, beta=15)
     assert sorted(cal_mod.classify(clear, frame, cal_mod.track(clear, frame)).occupied) == sorted(wires)
+
+
+# ── Wobbly outline detection ──────────────────────────────────────────────────
+
+
+def wobbly_detector(monkeypatch: pytest.MonkeyPatch, module) -> None:
+    """Replace board detection with one that jumps around by up to 12 px every call."""
+    rng = np.random.default_rng(0)
+    real = module.detect_board_downscaled
+
+    def wobbly(frame, prefer_near=None):
+        corners = real(frame)
+        return None if corners is None else corners + rng.uniform(-12, 12, corners.shape).astype(np.float32)
+
+    monkeypatch.setattr(module, "detect_board_downscaled", wobbly)
+
+
+def test_locked_grid_stops_following_a_wobbly_detector(cal: cal_mod.Calibration, monkeypatch: pytest.MonkeyPatch) -> None:
+    editor = cal_mod.CalibrationEditor()
+    editor.update(DESK, now=0.0)
+    assert editor.locked
+    locked_holes = dict(editor.holes)
+    wobbly_detector(monkeypatch, cal_mod)
+    for i in range(1, 20):
+        editor.update(DESK, now=i * 0.1)
+    assert editor.holes == locked_holes
+    editor.on_key(ord("a"), DESK, now=3.0)  # re-detect on request
+    assert editor.auto and not editor.locked
+
+
+def test_tracking_ignores_a_wobbly_detector(cal: cal_mod.Calibration, monkeypatch: pytest.MonkeyPatch) -> None:
+    wobbly_detector(monkeypatch, cal_mod)
+    for degrees, dx, dy in [(0.0, 0, 0), (0.7, 6, -4)]:
+        frame, matrix = moved(DESK, degrees, dx, dy)
+        got = cal_mod.track(cal, frame).apply(cal.holes)
+        expected = matrix @ np.array([*cal.holes["J63"], 1.0])
+        assert np.linalg.norm(np.subtract(got["J63"], expected)) < 0.5
+
+
+def test_calibrated_scan_is_not_blocked_by_a_wobbly_detector(cal: cal_mod.Calibration, monkeypatch: pytest.MonkeyPatch) -> None:
+    wobbly_detector(monkeypatch, camera)
+
+    class StillCamera:
+        def read(self):
+            return True, DESK.copy()
+
+    clock = iter(np.arange(0, 100, 1 / 30))
+    frame = camera.grab_steady_frame(StillCamera(), timeout=5, clock=lambda: next(clock), board_corners=cal.corners)
+    assert frame.shape == DESK.shape
+    # Without the calibrated area, the same wobble never counts as steady.
+    clock = iter(np.arange(0, 100, 1 / 30))
+    with pytest.raises(camera.CameraError, match="hold still"):
+        camera.grab_steady_frame(StillCamera(), timeout=5, clock=lambda: next(clock))

@@ -146,7 +146,7 @@ def test_scan_uses_the_chosen_camera(project_dir: Path, monkeypatch: pytest.Monk
         return FakeCapture(lambda n: BOARD.copy())
 
     monkeypatch.setattr(camera, "open_camera", fake_open)
-    monkeypatch.setattr(camera, "grab_steady_frame", lambda cap, timeout: cap.read()[1])
+    monkeypatch.setattr(camera, "grab_steady_frame", lambda cap, timeout, board_corners=None: cap.read()[1])
     runner = CliRunner(env={"COLUMNS": "200"})
 
     assert runner.invoke(app, ["camera", "use", "2"]).exit_code == 0

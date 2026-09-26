@@ -90,7 +90,8 @@ def read_board(camera: int, image: Path | None, calibration_dir: Path | None = N
     try:
         cap = open_camera(camera)
         try:
-            frame = grab_steady_frame(cap, timeout=timeout)
+            corners = calibration.corners if calibration is not None else None
+            frame = grab_steady_frame(cap, timeout=timeout, board_corners=corners)
         finally:
             cap.release()
     except CameraError as e:
