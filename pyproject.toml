@@ -17,9 +17,10 @@ dependencies = [
 
 [project.optional-dependencies]
 server = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+serial = ["pyserial>=3.5"]
 vision = ["opencv-contrib-python>=4.10", "numpy>=1.26"]
 dev = ["pytest>=8", "httpx>=0.27"]
-all = ["benchlog[server,vision,dev]"]
+all = ["benchlog[server,serial,vision,dev]"]
 
 [project.scripts]
 benchlog = "benchlog.cli.main:app"
