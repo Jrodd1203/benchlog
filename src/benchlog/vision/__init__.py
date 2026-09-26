@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 from dataclasses import dataclass, field
 
-from benchlog.core.board import BreadboardTemplate, BB830, LEFT_COLUMNS, RIGHT_COLUMNS
+from benchlog.core.board import BB830, BreadboardTemplate, LEFT_COLUMNS, RIGHT_COLUMNS
 from benchlog.core.models import Observation, ObservationKind, ObservationStatus
 
 # ── Canonical warp dimensions ─────────────────────────────────────────────────
@@ -237,7 +237,6 @@ def learn_background(board_frame: BoardFrame, empty_holes: list[str] | None = No
 def scan_occupancy(
     board_frame: BoardFrame,
     background: np.ndarray,
-    board: BreadboardTemplate = BB830,
     threshold: float = OCCUPANCY_THRESHOLD,
 ) -> dict[str, bool]:
     """Return {hole: is_occupied} for every hole on the board."""
@@ -247,43 +246,6 @@ def scan_occupancy(
         dist = float(np.linalg.norm(bgr.astype(float) - background.astype(float)))
         result[hole] = dist > threshold
     return result
-
-
-# ── Component type heuristic (stretch goal) ───────────────────────────────────
-
-# Rough HSV hue ranges for common component colours.
-_COMPONENT_COLOUR_HINTS: dict[str, tuple[int, int]] = {
-    "wire_red":    (0,   10),
-    "wire_orange": (10,  20),
-    "wire_yellow": (20,  35),
-    "wire_green":  (35,  85),
-    "wire_blue":   (85, 130),
-    "wire_purple": (130,160),
-    "led_red":     (0,   10),
-    "led_green":   (35,  85),
-    "led_yellow":  (20,  35),
-    "led_blue":    (100,130),
-}
-
-def guess_component_colour(board_frame: BoardFrame, hole: str) -> str | None:
-    """Return a colour-hint string for an occupied hole, or None if ambiguous."""
-    x, y = _HOLE_MAP[hole]
-    h, w = board_frame.warped.shape[:2]
-    patch = board_frame.warped[
-        max(0, y - SAMPLE_R): min(h, y + SAMPLE_R),
-        max(0, x - SAMPLE_R): min(w, x + SAMPLE_R),
-    ]
-    if patch.size == 0:
-        return None
-    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
-    mean_h = float(hsv[:, :, 0].mean())
-    mean_s = float(hsv[:, :, 1].mean())
-    if mean_s < 40:
-        return "wire_black_or_white"
-    for label, (lo, hi) in _COMPONENT_COLOUR_HINTS.items():
-        if lo <= mean_h <= hi:
-            return label
-    return None
 
 
 # ── Diff → Observations ───────────────────────────────────────────────────────
@@ -337,10 +299,10 @@ def capture_frame(cap: cv2.VideoCapture) -> np.ndarray:
 
 
 def capture_board(cap: cv2.VideoCapture, retries: int = 20) -> BoardFrame:
-    """Read frames until all 4 ArUco markers are visible. Returns calibrated BoardFrame."""
+    """Read frames until the board is detected. Returns calibrated BoardFrame."""
     for _ in range(retries):
         frame = capture_frame(cap)
         bf = calibrate(frame)
         if bf is not None:
             return bf
-    raise RuntimeError(f"Could not detect all 4 ArUco markers after {retries} frames")
+    raise RuntimeError(f"Board not detected after {retries} frames (contour + ArUco both failed)")

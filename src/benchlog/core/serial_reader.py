@@ -29,13 +29,6 @@ class PinSnapshot:
         except Exception:
             return None
 
-    def is_stable(self, gpio: int, window: "list[PinSnapshot]", tolerance: int = 2) -> bool:
-        """Return True if this GPIO reads the same value across the window (not floating)."""
-        vals = [s.digital.get(gpio) for s in window if gpio in s.digital]
-        if len(vals) < 3:
-            return False
-        return max(vals) - min(vals) <= tolerance  # type: ignore[operator]
-
 
 class SerialReader:
     """Background thread that continuously reads pin snapshots from the ESP32.
@@ -63,6 +56,9 @@ class SerialReader:
 
     def stop(self) -> None:
         self._running = False
+
+    def is_alive(self) -> bool:
+        return self._running and self._thread is not None and self._thread.is_alive()
 
     def latest(self) -> PinSnapshot | None:
         with self._lock:
@@ -108,6 +104,7 @@ class SerialReader:
                             self._window.append(snap)
         except serial.SerialException as e:
             print(f"[serial] {e}")
+            self._running = False
 
 
 def find_esp32_port() -> str | None:
