@@ -224,7 +224,7 @@ def test_portrait_frame_is_present_and_empty() -> None:
     or the board only gets a fraction of the frame's actual resolution and
     registration falls apart (see capture.py's ensure_landscape)."""
     board = _clean_board()
-    sideways = cv2.rotate(board, cv2.ROTATE_90_CLOCKWISE)  # long axis now vertical, 546x1651
+    sideways = cv2.rotate(board, cv2.ROTATE_90_COUNTERCLOCKWISE)  # long axis now vertical, 546x1651
     portrait_w, portrait_h = 1080, 1920
     nh, nw = sideways.shape[:2]
     frame = np.full((portrait_h, portrait_w, 3), 25, dtype=np.uint8)

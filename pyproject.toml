@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-server = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+server = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "python-multipart>=0.0.9"]
 vision = ["opencv-contrib-python>=4.10", "numpy>=1.26"]
 hardware = ["pyserial>=3.5"]
 dev = ["pytest>=8"]

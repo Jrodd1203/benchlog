@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>benchlog scan</title>
+  <style>
+    body { font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 20px; background: #111; color: #eee; }
+    h1 { font-size: 1.2rem; }
+    input[type=file] { display: none; }
+    button, label { display: block; width: 100%; padding: 14px; margin: 10px 0;
+      background: #1a6; color: #fff; border: none; border-radius: 8px;
+      font-size: 1rem; cursor: pointer; text-align: center; }
+    #preview { width: 100%; border-radius: 8px; margin: 10px 0; display: none; }
+    #result { background: #222; border-radius: 8px; padding: 12px; white-space: pre-wrap; font-size: 0.85rem; min-height: 60px; }
+    .occupied { color: #f84; }
+    .empty { color: #4f8; }
+  </style>
+</head>
+<body>
+  <h1>benchlog — scan board</h1>
+  <label for="cam">📷 Take photo / choose file</label>
+  <input type="file" id="cam" accept="image/*" capture="environment">
+  <img id="preview">
+  <button id="scanBtn" disabled>Scan</button>
+  <div id="result">No scan yet.</div>
+
+  <script>
+    const input = document.getElementById('cam');
+    const preview = document.getElementById('preview');
+    const btn = document.getElementById('scanBtn');
+    const result = document.getElementById('result');
+    let file = null;
+
+    input.addEventListener('change', () => {
+      file = input.files[0];
+      if (!file) return;
+      preview.src = URL.createObjectURL(file);
+      preview.style.display = 'block';
+      btn.disabled = false;
+    });
+
+    btn.addEventListener('click', async () => {
+      if (!file) return;
+      btn.disabled = true;
+      btn.textContent = 'Scanning…';
+      result.textContent = 'Sending to server…';
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch('/api/scan', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!data.present) {
+          result.innerHTML = '⚠️ Board not detected. Check lighting and angle.';
+        } else if (data.empty) {
+          result.innerHTML = '<span class="empty">✓ Board detected — empty (no components)</span>\n\nResidual: ' + (data.residual_px || 0).toFixed(2) + ' px';
+        } else {
+          result.innerHTML = '<span class="occupied">● Occupied holes (' + data.occupied.length + '):</span>\n' +
+            data.occupied.join('  ') +
+            '\n\nResidual: ' + (data.residual_px || 0).toFixed(2) + ' px' +
+            (data.upside_down ? '\n⚠️ Board appears upside down' : '') +
+            (data.warnings.length ? '\n⚠️ ' + data.warnings.join('\n⚠️ ') : '');
+        }
+      } catch (e) {
+        result.textContent = 'Error: ' + e.message;
+      }
+      btn.disabled = false;
+      btn.textContent = 'Scan';
+    });
+  </script>
+</body>
+</html>
