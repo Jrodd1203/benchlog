@@ -16,28 +16,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
+from benchlog.core.board import BB830
 from benchlog.core.esp32_source import Esp32Source, NullEsp32Source
 from benchlog.core.models import Observation, ObservationKind, ObservationStatus
+from benchlog.core.parts import esp32_devkit_v1_30_pins
 
-# GPIO number → hole name for the DOIT ESP32 DevKit V1 placed at rows 1-15.
-# Generated from parts.py: left col B, right col I, top_row=1.
 _GPIO_TO_HOLE: dict[int, str] = {
-    # Left side (column B, rows 1-15, top to bottom)
-    # EN=B1 (not a GPIO), GPIO36=B2 … GND1=B13 (skip), GPIO13=B14, VIN=B15 (skip)
-    36: "B2", 39: "B3", 34: "B4", 35: "B5", 32: "B6", 33: "B7",
-    25: "B8", 26: "B9", 27: "B10", 14: "B11", 12: "B12", 13: "B14",
-    # Right side (column I, rows 1-15, top to bottom)
-    # GPIO23=I1, GPIO22=I2, GPIO1=I3 (TX, skip), GPIO3=I4 (RX, skip),
-    # GPIO21=I5, GPIO19=I6, GPIO18=I7, GPIO5=I8, GPIO17=I9, GPIO16=I10,
-    # GPIO4=I11, GPIO2=I12, GPIO15=I13, GND2=I14 (skip), 3V3=I15 (skip)
-    23: "I1", 22: "I2", 21: "I5", 19: "I6", 18: "I7", 5: "I8",
-    17: "I9", 16: "I10", 4: "I11", 2: "I12", 15: "I13",
+    int(name.replace("GPIO", "")): hole
+    for name, hole in esp32_devkit_v1_30_pins(top_row=1).items()
+    if name.startswith("GPIO")
 }
-
-
-# Strip connectivity: holes in the same horizontal strip share a node.
-# We use board.strip() for this, but keep a simple per-row lookup here too.
-# A hole is "electrically confirmed" if its strip's GPIO reads stable (not floating).
+_STRIP_TO_GPIO: dict[str, int] = {
+    BB830.strip(hole): gpio
+    for gpio, hole in _GPIO_TO_HOLE.items()
+}
 
 
 @dataclass
@@ -49,21 +41,10 @@ class ReconciledObservation:
 
 def _gpio_for_strip(hole: str) -> int | None:
     """Return the GPIO number whose pin sits in the same strip as `hole`, or None."""
-    # Strips are same-row, same-side groups (A-E or F-J in the same row).
-    # We check every GPIO to see if it shares a strip with the target hole.
     try:
-        from benchlog.core.board import BB830
-        target_strip = BB830.strip(hole)
+        return _STRIP_TO_GPIO.get(BB830.strip(hole))
     except ValueError:
         return None
-
-    for gpio, gpio_hole in _GPIO_TO_HOLE.items():
-        try:
-            if BB830.strip(gpio_hole) == target_strip:
-                return gpio
-        except ValueError:
-            continue
-    return None
 
 
 def reconcile(
@@ -94,7 +75,7 @@ def reconcile(
 
         # No GPIO on this strip or source not alive → vision only
         if not src.is_alive() or gpio is None:
-            updated = obs.model_copy(update={"confidence": obs.confidence, "uncertain_holes": [hole] if gpio is None else []})
+            updated = obs.model_copy(update={"confidence": obs.confidence, "uncertain_holes": [hole]})
             results.append(ReconciledObservation(updated, vision_only=True, esp32_confirms=False))
             continue
 

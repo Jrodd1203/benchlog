@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 from dataclasses import dataclass, field
 
-from benchlog.core.board import BB830, LEFT_COLUMNS, RIGHT_COLUMNS
+from benchlog.core.board import BB830, BreadboardTemplate, LEFT_COLUMNS, RIGHT_COLUMNS
 from benchlog.core.models import Observation, ObservationKind, ObservationStatus
 
 # ── Canonical warp dimensions ─────────────────────────────────────────────────
@@ -299,10 +299,10 @@ def capture_frame(cap: cv2.VideoCapture) -> np.ndarray:
 
 
 def capture_board(cap: cv2.VideoCapture, retries: int = 20) -> BoardFrame:
-    """Read frames until all 4 ArUco markers are visible. Returns calibrated BoardFrame."""
+    """Read frames until the board is detected. Returns calibrated BoardFrame."""
     for _ in range(retries):
         frame = capture_frame(cap)
         bf = calibrate(frame)
         if bf is not None:
             return bf
-    raise RuntimeError(f"Could not detect all 4 ArUco markers after {retries} frames")
+    raise RuntimeError(f"Board not detected after {retries} frames (contour + ArUco both failed)")
