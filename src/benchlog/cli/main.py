@@ -11,6 +11,9 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from benchlog.core import prs
+from benchlog.core.board_state import RewireStep
+from benchlog.core.branches import BoardReport, board_report, checkout as checkout_branch, create_branch, list_branches
 from benchlog.core.checks.store import check_project
 from benchlog.core.diff import CircuitDiff, describe
 from benchlog.core.diff import diff as circuit_diff
@@ -435,6 +438,172 @@ def check() -> None:
         print(f"[dim]not checked (missing data): {names}[/dim]")
     if report.status == "fail":
         raise typer.Exit(1)
+
+
+# ── Branches, board, PRs ──────────────────────────────────────────────────────
+
+
+def _print_guide(steps: list[RewireStep]) -> None:
+    for step in steps:
+        style = "dim" if step.optional else "cyan"
+        print(f"  [{style}]{step.step}.[/{style}] {escape(step.text)}")
+
+
+def _print_board(report: BoardReport) -> None:
+    if report.matches:
+        print(f"[green]the board matches {report.branch}[/green]")
+    elif report.matches is None:
+        print("[yellow]benchlog hasn't seen this board yet[/yellow]: scan it to confirm it matches the circuit")
+    else:
+        assumed = f" (assuming it still matches {report.assumed_from[:7]})" if report.assumed_from else ""
+        print(f"[yellow]rewire the board to match {report.branch}{assumed}:[/yellow]")
+        _print_guide(report.guide)
+        print("then scan to confirm")
+
+
+@app.command()
+@_handle_errors
+def branch(name: str | None = typer.Argument(None, help="Create this branch at HEAD. Without it, list branches.")) -> None:
+    """List branches, or create one at HEAD."""
+    project = Project.find()
+    if name:
+        b = create_branch(project, name)
+        print(f"created branch [bold]{escape(b.name)}[/bold] at {b.head[:7]}; switch to it with `benchlog checkout {b.name}`")
+        return
+    for b in list_branches(project):
+        marker = "[green]*[/green]" if b.current else " "
+        print(f"{marker} {escape(b.name):<24} [yellow]{b.head[:7]}[/yellow] {escape(b.subject)}")
+
+
+@app.command()
+@_handle_errors
+def checkout(name: str) -> None:
+    """Switch to a branch, then show how to rewire the board if it no longer matches."""
+    report = checkout_branch(Project.find(), name)
+    print(f"on branch [bold]{escape(report.branch)}[/bold]")
+    _print_board(report)
+
+
+@app.command()
+@_handle_errors
+def board() -> None:
+    """Does the physical board match the checked-out circuit?"""
+    project = Project.find()
+    report = board_report(project)
+    state = report.state
+    matched = state.matches_commit[:7] if state.matches_commit else "unknown"
+    print(f"board last confirmed at: {matched}" + (f" ({state.updated_at})" if state.updated_at else ""))
+    _print_board(report)
+
+
+pr_app = typer.Typer(help="Local pull requests: compare a branch with main, check it, merge it.", no_args_is_help=True)
+app.add_typer(pr_app, name="pr")
+
+
+def _print_pr(detail: prs.PRDetail) -> None:
+    pr = detail.pr
+    print(f"[bold]#{pr.id} {escape(pr.title)}[/bold]  \\[{pr.status}]  {escape(pr.from_branch)} → {escape(pr.into_branch)}")
+    if pr.description:
+        print(f"  {escape(pr.description)}")
+    print("\n[bold]changes[/bold]")
+    for line in detail.summary or ["no circuit changes"]:
+        print(f"  {escape(line)}")
+    if detail.checks:
+        print(f"\n[bold]checks[/bold] on {detail.checks.commit[:7] if detail.checks.commit else '?'}: {STATUS_STYLE[detail.checks.status]}")
+        for r in detail.checks.results:
+            if r.status == "fail":
+                print(f"  {STATUS_STYLE[r.status]} {r.check}: {escape(r.message)}")
+    _print_merge_notes(detail.merge)
+    tested = pr.tested
+    if tested.done:
+        print(f"\ntested on {tested.commit[:7]}" + (f": {escape(tested.note)}" if tested.note else ""))
+    else:
+        print("\n[dim]not tested on the latest commit[/dim]")
+    verdict = "[green]can merge[/green]" if detail.merge.allowed else "[red]can't merge[/red]"
+    print(f"{verdict}: {escape(detail.merge.reason)}")
+
+
+def _print_merge_notes(merge: prs.MergeStatus) -> None:
+    if merge.warnings:
+        print("\n[yellow bold]warnings (confirm before merging, they don't block):[/yellow bold]")
+        for w in merge.warnings:
+            print(f"  [yellow]![/yellow] {escape(w)}")
+    if merge.not_checked:
+        print("\n[dim]not checked (missing data, not a pass):[/dim]")
+        for n in merge.not_checked:
+            print(f"  [dim]- {escape(n)}[/dim]")
+
+
+@pr_app.command("create")
+@_handle_errors
+def pr_create(
+    title: str = typer.Option(..., "--title", "-t"),
+    description: str = typer.Option("", "--description", "-d"),
+    into: str | None = typer.Option(None, "--into", help="Branch to merge into (default: main)."),
+) -> None:
+    """Open a PR from the current branch."""
+    project = Project.find()
+    pr = prs.create(project, project.repo.current_branch(), into, title, description)
+    print(f"opened PR [bold]#{pr.id}[/bold]: {escape(pr.from_branch)} → {escape(pr.into_branch)}")
+    _print_pr(prs.get(project, pr.id))
+
+
+@pr_app.command("list")
+@_handle_errors
+def pr_list() -> None:
+    """All PRs, newest last."""
+    items = prs.list_prs(Project.find())
+    if not items:
+        print("no PRs yet; open one with `benchlog pr create --title ...`")
+        return
+    table = Table(box=None, pad_edge=False)
+    for col in ("#", "status", "title", "branches", "checks", "tested"):
+        table.add_column(col)
+    for pr in items:
+        checks = STATUS_STYLE[pr.checks.overall] if pr.checks else "-"
+        table.add_row(
+            str(pr.id), pr.status, escape(pr.title), escape(f"{pr.from_branch} → {pr.into_branch}"), checks,
+            "yes" if pr.tested.done else "no",
+        )  # fmt: skip
+    Console().print(table)
+
+
+@pr_app.command("show")
+@_handle_errors
+def pr_show(pr_id: int) -> None:
+    """Show a PR: its changes, checks, and whether it can be merged."""
+    _print_pr(prs.get(Project.find(), pr_id))
+
+
+@pr_app.command("tested")
+@_handle_errors
+def pr_tested(pr_id: int, note: str = typer.Option("", "--note", "-n")) -> None:
+    """Record that the branch's latest commit was tested on the real board."""
+    pr = prs.mark_tested(Project.find(), pr_id, note)
+    print(f"PR #{pr.id} marked as tested on {pr.tested.commit[:7]}")
+
+
+@pr_app.command("merge")
+@_handle_errors
+def pr_merge(pr_id: int) -> None:
+    """Fast-forward the target branch to this PR's branch (checks must pass)."""
+    detail = prs.merge(Project.find(), pr_id)
+    print(f"[green]merged[/green] PR #{pr_id} into {escape(detail.pr.into_branch)}; now on {escape(detail.pr.into_branch)}")
+    if detail.merge.warnings:
+        print("[yellow]merged with warnings:[/yellow]")
+        for w in detail.merge.warnings:
+            print(f"  [yellow]![/yellow] {escape(w)}")
+
+
+@pr_app.command("close")
+@_handle_errors
+def pr_close(pr_id: int) -> None:
+    """Close a PR without merging it."""
+    result = prs.close(Project.find(), pr_id)
+    print(f"closed PR #{result.pr.id}")
+    if result.guide:
+        print(f"to put the board back to {escape(result.pr.into_branch)} (then `benchlog checkout {result.pr.into_branch}`):")
+        _print_guide(result.guide)
 
 
 @app.command()

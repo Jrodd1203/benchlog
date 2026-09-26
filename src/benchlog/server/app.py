@@ -19,10 +19,15 @@ from benchlog.core.diff import CircuitDiff, describe, diff
 from benchlog.core.models import Circuit, Hole, Observation
 from benchlog.core.netlist import Netlist, netlist
 from benchlog.core.project import Project, ProjectError
+from benchlog.core.prs import PRNotFound
 from benchlog.core.reconcile import Reconciliation, reconcile
 from benchlog.core.repo import Commit, GitError
 from benchlog.core.scan import reading_from_circuit
 from benchlog.serial.service import SerialSnapshot
+from benchlog.server.branch_routes import router as branch_router
+from benchlog.server.check_routes import router as check_router
+from benchlog.server.pr_routes import not_found as pr_not_found
+from benchlog.server.pr_routes import router as pr_router
 from benchlog.server.serial_routes import router as serial_router
 from benchlog.server.serial_routes import serial_service
 
@@ -36,6 +41,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="benchlog", lifespan=lifespan)
 app.include_router(serial_router)
+app.include_router(check_router)
+app.include_router(branch_router)
+app.include_router(pr_router)
+app.add_exception_handler(PRNotFound, pr_not_found)
 
 
 @app.exception_handler(ProjectError)
