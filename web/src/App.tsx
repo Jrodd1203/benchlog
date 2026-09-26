@@ -14,17 +14,10 @@ import type { ProjectSummary } from './types'
 
 type Screen = 'projects' | 'setup' | 'workspace' | 'review' | 'commits' | 'timeline' | 'diff' | 'serial' | StubId
 
-/** Tabs shown once a project is open, in the team's requirement order. */
+/** Tabs shown once a project is open — only built screens. */
 const TABS: { id: Exclude<Screen, 'projects'>; label: string }[] = [
   { id: 'workspace', label: 'Workspace' },
-  { id: 'review', label: 'Review' },
-  { id: 'commits', label: 'Commits' },
   { id: 'timeline', label: 'Timeline' },
-  { id: 'diff', label: 'Diff' },
-  { id: 'checks', label: 'Checks' },
-  { id: 'github', label: 'GitHub' },
-  { id: 'issues', label: 'Issues' },
-  { id: 'serial', label: 'Serial' },
   { id: 'setup', label: 'Setup' },
 ]
 
@@ -38,7 +31,7 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className="app" data-screen={screen}>
       <nav className="topbar">
         <button type="button" className="brand" onClick={() => setScreen('projects')}>
           benchlog
