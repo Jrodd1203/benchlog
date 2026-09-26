@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import numpy as np
 import pytest
 
+np = pytest.importorskip("numpy")
 cv2 = pytest.importorskip("cv2")
 
 from benchlog.core.board import BB830  # noqa: E402
