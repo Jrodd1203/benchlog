@@ -105,7 +105,7 @@ def _print_observations(observations: list[Observation]) -> None:
 @_handle_errors
 def scan(
     image: Path | None = typer.Option(None, "--image", help="Scan a photo instead of the camera."),
-    camera: int = typer.Option(0, "--camera", help="Camera index to capture from."),
+    camera: int | None = typer.Option(None, "--camera", help="Camera index (default: `benchlog camera use`, else 0)."),
     simulate: Path | None = typer.Option(None, "--simulate", help="Pretend the board looks like this circuit file."),
     sync: bool = typer.Option(False, "--sync", help="Record the board as matching the circuit; propose nothing."),
 ) -> None:
@@ -114,7 +114,7 @@ def scan(
     if simulate is not None:
         reading = reading_from_circuit(Circuit.model_validate_json(simulate.read_text()), f"simulated {simulate.name}")
     else:
-        reading = read_board(camera, image)
+        reading = read_board(project.camera_index(camera), image)
     for warning in reading.warnings:
         print(f"[yellow]warning:[/yellow] {escape(warning)}")
 
@@ -285,6 +285,63 @@ def log(limit: int | None = typer.Option(None, "-n", help="Show at most this man
             _summary(circuit_diff(before, after)),
         )
     Console().print(table)
+
+
+camera_app = typer.Typer(help="Pick and aim the camera over the bench (webcam or Continuity Camera).")
+app.add_typer(camera_app, name="camera")
+
+
+def _vision_camera():
+    try:
+        from benchlog.vision import camera
+    except ImportError as e:
+        raise ProjectError("the camera needs the vision pipeline (install with `pip install -e '.[vision]'`)") from e
+    return camera
+
+
+@camera_app.command("list")
+@_handle_errors
+def camera_list() -> None:
+    """Show which camera indices work, at what resolution."""
+    cameras = _vision_camera().list_cameras()
+    if not cameras:
+        raise ProjectError(f"no cameras found. Things to try:\n{_vision_camera().SETUP_HINTS}")
+    try:
+        chosen = Project.find().camera_index()
+    except (ProjectError, GitError):
+        chosen = None
+    for c in cameras:
+        mark = "  [green](chosen)[/green]" if c.index == chosen else ""
+        print(f"camera {c.index}: {c.width}x{c.height}{mark}")
+    print("aim one with `benchlog camera preview N`, then pick it with `benchlog camera use N`")
+
+
+@camera_app.command("use")
+@_handle_errors
+def camera_use(index: int = typer.Argument(..., help="Camera index from `benchlog camera list`.")) -> None:
+    """Scan with this camera from now on (saved for this workstation)."""
+    Project.find().set_config("camera", index)
+    print(f"scans will use camera {index}")
+
+
+@camera_app.command("preview")
+@_handle_errors
+def camera_preview(index: int | None = typer.Argument(None, help="Camera index (default: the chosen one).")) -> None:
+    """Live view for aiming the camera; shows when the board is detected and steady."""
+    camera = _vision_camera()
+    if index is None:
+        try:
+            index = Project.find().camera_index()
+        except (ProjectError, GitError):
+            index = 0
+    try:
+        cap = camera.open_camera(index)
+        try:
+            camera.preview(cap)
+        finally:
+            cap.release()
+    except camera.CameraError as e:
+        raise ProjectError(str(e)) from e
 
 
 @app.command()

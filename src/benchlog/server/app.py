@@ -70,7 +70,7 @@ class HistoryEntry(BaseModel):
 class ScanRequest(BaseModel):
     simulate: Circuit | None = Field(default=None, description="Pretend the board looks like this (demo fallback).")
     image: str | None = Field(default=None, description="Path to a photo to scan instead of the camera.")
-    camera: int = 0
+    camera: int | None = Field(default=None, description="Camera index; default: the one chosen with `benchlog camera use`.")
     sync: bool = Field(default=False, description="Record the board as matching the circuit; propose nothing.")
 
 
@@ -181,7 +181,7 @@ def scan(request: ScanRequest, project: ProjectDep) -> ScanResponse:
     if request.simulate is not None:
         reading = reading_from_circuit(request.simulate, "simulated")
     else:
-        reading = read_board(request.camera, Path(request.image) if request.image else None)
+        reading = read_board(project.camera_index(request.camera), Path(request.image) if request.image else None)
     observations = project.scan(reading, sync=request.sync)
     return ScanResponse(source=reading.source, warnings=reading.warnings, observations=observations)
 

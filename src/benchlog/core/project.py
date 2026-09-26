@@ -3,6 +3,7 @@
     benchlog/circuit.json        committed: the accepted circuit
     .benchlog/observations.json  gitignored: scan results waiting for review
     .benchlog/calibration.json   gitignored: camera calibration for this workstation
+    .benchlog/config.json        gitignored: this workstation's settings, e.g. {"camera": 1}
     .benchlog/baseline/          gitignored: empty-board capture from `benchlog.vision.capture`
     .benchlog/scans/             gitignored: reference and latest board readings
 """
@@ -24,6 +25,7 @@ CIRCUIT_PATH = Path("benchlog/circuit.json")
 STATE_DIR = Path(".benchlog")
 OBSERVATIONS_PATH = STATE_DIR / "observations.json"
 CALIBRATION_PATH = STATE_DIR / "calibration.json"
+CONFIG_PATH = STATE_DIR / "config.json"
 
 _observations = TypeAdapter(list[Observation])
 
@@ -76,6 +78,19 @@ class Project:
             gitignore.write_text(f"{existing}{prefix}{entry}\n")
             created.append(f".gitignore entry {entry}")
         return project, created
+
+    def config(self) -> dict:
+        path = self.repo.root / CONFIG_PATH
+        return json.loads(path.read_text()) if path.exists() else {}
+
+    def set_config(self, key: str, value: object) -> None:
+        path = self.repo.root / CONFIG_PATH
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps({**self.config(), key: value}, indent=2, sort_keys=True) + "\n")
+
+    def camera_index(self, override: int | None = None) -> int:
+        """The camera to scan with: an explicit override, else the saved one, else 0."""
+        return override if override is not None else int(self.config().get("camera", 0))
 
     def load_circuit(self) -> Circuit:
         return Circuit.model_validate_json(self.circuit_path.read_text())

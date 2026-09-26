@@ -8,36 +8,18 @@ from pathlib import Path
 from benchlog.core.project import ProjectError
 from benchlog.core.scan import BoardReading
 
+_NEEDS_VISION = (
+    "camera scanning needs the vision pipeline (install with `pip install -e '.[vision]'`); "
+    "use --simulate CIRCUIT.json until then"
+)
 
-def read_board(camera: int, image: Path | None) -> BoardReading:
-    """Read hole occupancy from a photo or the camera using the vision pipeline."""
+
+def reading_from_frame(frame, source: str) -> BoardReading:
+    """Hole occupancy of one frame (a numpy BGR image)."""
     try:
-        import cv2
-
         from benchlog.vision.capture import analyse_image
     except ImportError as e:
-        raise ProjectError(
-            "camera scanning needs the vision pipeline (install with `pip install -e '.[vision]'`); "
-            "use --simulate CIRCUIT.json until then"
-        ) from e
-
-    if image is not None:
-        frame = cv2.imread(str(image))
-        if frame is None:
-            raise ProjectError(f"can't read image {image}")
-        source = f"image {image.name}"
-    else:
-        cap = cv2.VideoCapture(camera)
-        try:
-            frame = None
-            for _ in range(10):  # let exposure settle before keeping a frame
-                ok, grabbed = cap.read()
-                frame = grabbed if ok else frame
-        finally:
-            cap.release()
-        if frame is None:
-            raise ProjectError(f"can't read from camera {camera}")
-        source = f"camera {camera}"
+        raise ProjectError(_NEEDS_VISION) from e
 
     result = analyse_image(frame)
     if not result.present:
@@ -51,3 +33,28 @@ def read_board(camera: int, image: Path | None) -> BoardReading:
         source=source,
     )
 
+
+def read_board(camera: int, image: Path | None, timeout: float = 10.0) -> BoardReading:
+    """Read the board from a photo, or from the camera once the board is in view and still."""
+    try:
+        import cv2
+
+        from benchlog.vision.camera import CameraError, grab_steady_frame, open_camera
+    except ImportError as e:
+        raise ProjectError(_NEEDS_VISION) from e
+
+    if image is not None:
+        frame = cv2.imread(str(image))
+        if frame is None:
+            raise ProjectError(f"can't read image {image}")
+        return reading_from_frame(frame, f"image {image.name}")
+
+    try:
+        cap = open_camera(camera)
+        try:
+            frame = grab_steady_frame(cap, timeout=timeout)
+        finally:
+            cap.release()
+    except CameraError as e:
+        raise ProjectError(str(e)) from e
+    return reading_from_frame(frame, f"camera {camera}")
