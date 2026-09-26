@@ -138,6 +138,12 @@ def _describe_observation(o: Observation) -> str:
     return text
 
 
+def _print_observations(observations: list[Observation]) -> None:
+    for o in observations:
+        color = "yellow" if o.uncertain_holes else "green"
+        print(f"  [{color}]{escape(_describe_observation(o))}[/{color}]")
+
+
 @app.command()
 @_handle_errors
 def scan(
@@ -175,9 +181,79 @@ def scan(
         return
     n = len(observations)
     print(f"[bold]{n} change{'s' * (n != 1)} to review[/bold] ({escape(reading.source)})")
-    for o in observations:
-        color = "yellow" if o.uncertain_holes else "green"
-        print(f"  [{color}]{escape(_describe_observation(o))}[/{color}]")
+    _print_observations(observations)
+    print("review with `benchlog review accept|reject|edit`")
+
+
+review_app = typer.Typer(help="Review what the last scan saw: accept, reject, or correct it.")
+app.add_typer(review_app, name="review")
+
+
+def _ids_or_all(ids: list[str] | None, all_: bool) -> list[str] | None:
+    if all_ == bool(ids):
+        raise ProjectError("name observations to act on (e.g. obs1 obs2) or pass --all")
+    return None if all_ else ids
+
+
+@review_app.callback(invoke_without_command=True)
+@_handle_errors
+def review(ctx: typer.Context) -> None:
+    """List observations waiting for review."""
+    if ctx.invoked_subcommand is not None:
+        return
+    pending = Project.find().pending_observations()
+    if not pending:
+        print("nothing to review")
+        return
+    print(f"[bold]{len(pending)} pending[/bold]")
+    _print_observations(pending)
+
+
+@review_app.command()
+@_handle_errors
+def accept(
+    ids: list[str] | None = typer.Argument(None, help="Observation ids, e.g. obs1."),
+    all_: bool = typer.Option(False, "--all", help="Accept every pending observation."),
+) -> None:
+    """Apply observations to the circuit (all or nothing)."""
+    project = Project.find()
+    before = project.load_circuit()
+    accepted = project.accept_observations(_ids_or_all(ids, all_))
+    if not accepted:
+        print("nothing to review")
+        return
+    print(f"[green]accepted[/green] {', '.join(o.id for o in accepted)}")
+    d = circuit_diff(before, project.load_circuit())
+    if not d.is_empty:
+        _print_diff(d)
+    print("commit with `benchlog commit -m ...`")
+
+
+@review_app.command()
+@_handle_errors
+def reject(
+    ids: list[str] | None = typer.Argument(None, help="Observation ids, e.g. obs1."),
+    all_: bool = typer.Option(False, "--all", help="Reject every pending observation."),
+) -> None:
+    """Discard observations the camera got wrong."""
+    rejected = Project.find().reject_observations(_ids_or_all(ids, all_))
+    print(f"rejected {', '.join(o.id for o in rejected)}" if rejected else "nothing to review")
+
+
+@review_app.command()
+@_handle_errors
+def edit(
+    obs_id: str = typer.Argument(..., help="Observation id, e.g. obs2."),
+    ends: list[str] = typer.Argument(..., help="Wire ends to set, e.g. b=J40 (or a=A4 b=J40)."),
+) -> None:
+    """Set or correct a wire's ends before accepting it."""
+    parsed = {}
+    for item in ends:
+        end, sep, hole = item.partition("=")
+        if not sep or not hole:
+            raise ProjectError(f"expected END=HOLE like b=J40, got {item!r}")
+        parsed[end.strip()] = hole.strip().upper()
+    _print_observations([Project.find().edit_observation(obs_id, parsed)])
 
 
 @app.command()
