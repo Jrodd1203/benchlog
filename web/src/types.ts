@@ -67,6 +67,91 @@ export interface CircuitDiff {
   placement: PlacementChange[]
 }
 
+// ── API responses (src/benchlog/server/app.py, serial/, core/reconcile.py) ──────
+
+export interface Commit {
+  sha: string
+  short_sha: string
+  author: string
+  /** ISO 8601 */
+  date: string
+  subject: string
+}
+
+export interface DiffResponse {
+  diff: CircuitDiff
+  /** Plain-English summary, electrical changes first. */
+  lines: string[]
+}
+
+export interface StatusResponse {
+  branch: string
+  head: Commit | null
+  committed: boolean
+  /** Working circuit vs HEAD. */
+  changes: DiffResponse
+  /** Observations waiting for review. */
+  pending: number
+}
+
+export type Verdict = 'confirmed' | 'conflict' | 'no_expectation' | 'not_checked'
+
+export interface ProposalVerdict {
+  observation_id: string
+  verdict: Verdict
+  gpios: number[]
+  message: string | null
+}
+
+export interface Reconciliation {
+  proposals: ProposalVerdict[]
+  pins: { gpio: number; expected: string | null; actual: string | null; verdict: Verdict; reason: string }[]
+  i2c: { address: string; component: string | null; status: 'confirmed' | 'missing' | 'unexpected' }[]
+  warnings: string[]
+}
+
+export type PinState = 'floating' | 'pulled_low' | 'pulled_high' | 'unstable' | 'unsafe'
+
+export interface SerialSnapshot {
+  port: string
+  agent: string | null
+  probe: { pins: Record<string, PinState> }
+  i2c: { sda: number; scl: number; devices: string[] }
+}
+
+export interface ScanResponse {
+  source: string
+  warnings: string[]
+  observations: Observation[]
+  serial: SerialSnapshot | null
+  reconciliation: Reconciliation
+}
+
+export interface AcceptResponse {
+  accepted: Observation[]
+  circuit: Circuit
+  changes: DiffResponse
+}
+
+export interface CommitResponse {
+  commit: Commit
+  changes: DiffResponse
+}
+
+export interface SerialStatus {
+  connected: boolean
+  port: string | null
+  agent: string | null
+  pins: number[]
+  last_seen: string | null
+  last_error: string | null
+}
+
+export interface PortInfo {
+  device: string
+  description: string
+}
+
 // ── UI-only types (no backend model yet) ─────────────────────────────────────
 
 export interface ProjectSummary {

@@ -19,7 +19,7 @@ export function StatusLight() {
       const s = await getSerialStatus()
       if (alive) {
         setState(s.state)
-        setPort(s.port)
+        setPort(s.status?.port ?? null)
       }
     }
     poll()

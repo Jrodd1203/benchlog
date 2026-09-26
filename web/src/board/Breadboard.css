@@ -156,3 +156,31 @@
     animation: none;
   }
 }
+
+.bb-ring.highlight {
+  stroke: #d08a00;
+  stroke-width: 0.35;
+  stroke-dasharray: 0.6 0.4;
+}
+
+/* Clickable holes: a bigger hit area and a hover ring. */
+.breadboard.pickable .bb-hole,
+.breadboard.pickable .bb-pin {
+  cursor: crosshair;
+  stroke: transparent;
+  stroke-width: 0.9;
+}
+
+.breadboard.pickable .bb-hole:hover,
+.breadboard.pickable .bb-pin:hover {
+  stroke: #2c5d9e;
+  stroke-width: 0.35;
+}
+
+/* Decorations never swallow clicks meant for the hole underneath. */
+.bb-ring,
+.bb-ghost,
+.bb-wire-label,
+.bb-part {
+  pointer-events: none;
+}
