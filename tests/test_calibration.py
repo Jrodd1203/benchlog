@@ -298,3 +298,25 @@ def test_scan_debug_explains_what_the_camera_saw(cal: cal_mod.Calibration, tmp_p
     assert "so filled: ['A40', 'A45']" in result.output
     assert (project.scans.dir / "debug" / "changes.png").exists()
     assert (project.scans.dir / "debug" / "frame.png").exists()
+
+
+def test_saving_warns_when_the_board_isnt_empty(cal: cal_mod.Calibration) -> None:
+    with_wire = plug(DESK, cal.holes, {"C10": (0, 160, 0), "C11": (0, 160, 0), "C12": (0, 160, 0)})
+    editor = cal_mod.CalibrationEditor(corners=cal.corners.copy(), holes=dict(cal.holes), locked=True, auto=False)
+    assert editor.on_key(13, with_wire, 0.0) is None
+    assert "doesn't look empty" in editor.message and "C10, C11, C12" in editor.message
+    assert editor.on_key(-1, with_wire, 0.1) is None  # frames with no key pressed don't cancel it
+    assert editor.on_key(13, with_wire, 0.2) == "save"  # Enter again: save anyway
+
+    empty = cal_mod.CalibrationEditor(corners=cal.corners.copy(), holes=dict(cal.holes), locked=True, auto=False)
+    assert empty.on_key(13, DESK, 0.0) == "save"
+    built = cal_mod.CalibrationEditor(corners=cal.corners.copy(), holes=dict(cal.holes), expect_empty=False)
+    assert built.on_key(13, with_wire, 0.0) == "save"  # --board-matches-circuit: not meant to be empty
+
+
+def test_row_numbering_flip(cal: cal_mod.Calibration) -> None:
+    editor = cal_mod.CalibrationEditor(corners=cal.corners.copy(), holes=dict(cal.holes))
+    editor.on_key(ord("r"), DESK, 0.0)
+    flipped = editor.named_holes()
+    assert flipped["A1"] == cal.holes["A63"] and flipped["J63"] == cal.holes["J1"]
+    assert flipped["L+1"] == cal.holes["L+50"] and flipped["R-50"] == cal.holes["R-1"]

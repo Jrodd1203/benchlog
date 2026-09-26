@@ -58,6 +58,7 @@ LIGHTING_SIGMA_PITCH = 2.5  # lighting changes smoother than this (in hole pitch
 PATCH_RADIUS_PITCH = 0.3  # patch half-size as a fraction of the hole pitch
 MIN_OCCUPIED_DIFF = 18.0  # Lab distance a hole must change by, however quiet the scan
 NOISE_SIGMAS = 8.0  # ... and this many robust standard deviations above the typical hole
+MIN_COLOR_DIFF = 12.0  # chroma difference that makes a hole look colored (empty-board check)
 
 
 class CalibrationError(RuntimeError):
@@ -504,6 +505,29 @@ def debug_image(cal: Calibration, frame: np.ndarray, occupancy: Occupancy, top: 
     return out
 
 
+def colored_holes(frame: np.ndarray, holes: dict[str, tuple[float, float]]) -> list[str]:
+    """Terminal holes that look colored compared with the rest: likely a wire on a board meant to be empty.
+
+    Judged on color only (not brightness), so shadows and the dark surface around the board don't
+    count; jumper insulation is colored, board plastic isn't. Rails are skipped, since their printed
+    red and blue lines sit right next to the holes.
+    """
+    lab = cv2.cvtColor(cv2.GaussianBlur(frame, (0, 0), BLUR_SIGMA), cv2.COLOR_BGR2LAB).astype(np.float32)
+    r = max(2, round(PATCH_RADIUS_PITCH * hole_pitch_px(holes)))
+    names = [n for n in holes if n[:2] not in RAILS]
+    h, w = lab.shape[:2]
+    chroma = []
+    for n in names:
+        x, y = round(holes[n][0]), round(holes[n][1])
+        patch = lab[max(0, y - r) : min(h, y + r + 1), max(0, x - r) : min(w, x + r + 1), 1:]
+        chroma.append(patch.reshape(-1, 2).mean(axis=0) if patch.size else np.zeros(2))
+    chroma = np.array(chroma)
+    distance = np.linalg.norm(chroma - np.median(chroma, axis=0), axis=1)
+    median = float(np.median(distance))
+    threshold = max(MIN_COLOR_DIFF, median + NOISE_SIGMAS * 1.4826 * float(np.median(np.abs(distance - median))))
+    return sorted((n for n, d in zip(names, distance) if d > threshold), key=lambda n: (n[0], int(n[1:])))
+
+
 # ── Interactive calibration ───────────────────────────────────────────────────
 
 # Arrow key codes from cv2.waitKeyEx differ per platform; i/j/k/l work everywhere.
@@ -538,6 +562,8 @@ class CalibrationEditor:
     last_snap: float = float("-inf")
     message: str = ""
     row1_left: bool = False  # board numbered from the other end (the layout has row 1 on the right)
+    expect_empty: bool = True  # False when calibrating with the circuit built
+    confirm_save: bool = False  # the user was warned the board doesn't look empty; Enter again saves
 
     def named_holes(self) -> dict[str, tuple[float, float]] | None:
         """The hole map with names matching the board's printed numbering."""
@@ -595,13 +621,23 @@ class CalibrationEditor:
 
     def on_key(self, key: int, frame: np.ndarray, now: float) -> str | None:
         """Returns "save" or "quit" when the window should close."""
+        if key == -1:  # no key pressed this frame
+            return None
         if key in (27, ord("q")):
             return "quit"
         if key in (13, 10, 32):
             if self.holes is None:
                 self.message = "no hole map yet: wait for the board or drag the corner handles"
                 return None
+            if self.expect_empty and not self.confirm_save:
+                found = colored_holes(frame, self.named_holes())
+                if found:
+                    shown = ", ".join(found[:6]) + (" ..." if len(found) > 6 else "")
+                    self.message = f"board doesn't look empty ({shown}): remove it and press Enter, or Enter again to save anyway"
+                    self.confirm_save = True
+                    return None
             return "save"
+        self.confirm_save = False  # any other key: check again on the next Enter
         if key == ord("a"):  # follow the detected board again
             self.auto, self.locked, self.message = True, False, ""
         elif key in (ord("1"), ord("2"), ord("3"), ord("4")):
@@ -664,7 +700,7 @@ def run_calibration(
 
     from benchlog.vision.camera import read_frame  # camera imports capture, like this module
 
-    editor = CalibrationEditor()
+    editor = CalibrationEditor(expect_empty=not occupied)
     frame = read_frame(cap)
     h, w = frame.shape[:2]
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
