@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
-import { getCircuitAt, getTimeline, listProjects } from '../api'
-import { Breadboard } from '../board/Breadboard'
+import { listProjects } from '../api'
 import { FutureButton } from '../components/FutureButton'
-import type { Circuit, ProjectSummary, TimelineEntry } from '../types'
+import type { ProjectSummary } from '../types'
 
 /** Requirement 1 (landing page): what benchlog is, then the local projects to open. */
 export function ProjectsScreen({ onOpen }: { onOpen: (p: ProjectSummary) => void }) {
@@ -35,8 +34,10 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: ProjectSummary) => void
             <li>Scrub back through every version</li>
           </ol>
         </div>
-        <HeroBoard />
+        <HeroCodePanel />
       </section>
+
+      <CommandsSection />
 
       <div className="section-label">
         <h2>Projects</h2>
@@ -70,59 +71,157 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: ProjectSummary) => void
   )
 }
 
-const HERO_STEP_MS = 1600
+// ── Tabbed code panel ─────────────────────────────────────────────────────────
 
-/** A small board that replays the build history on a loop (static at the latest commit for reduced motion). */
-function HeroBoard() {
-  const [entries, setEntries] = useState<TimelineEntry[]>([])
-  const [index, setIndex] = useState(0)
-  const [boards, setBoards] = useState<{ circuit: Circuit; previous: Circuit | null } | null>(null)
+type TabId = 'scan' | 'review' | 'commit' | 'check'
+type LineType = 'prompt' | 'ok' | 'bad' | 'warn' | 'comment' | 'plain' | 'empty'
 
-  useEffect(() => {
-    let alive = true
-    getTimeline().then(({ data }) => {
-      if (!alive) return
-      setEntries(data)
-      setIndex(data.length - 1)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
+interface CodeLine {
+  type: LineType
+  text: string
+}
 
-  useEffect(() => {
-    if (entries.length < 2 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    const id = setInterval(() => setIndex((i) => (i + 1) % entries.length), HERO_STEP_MS)
-    return () => clearInterval(id)
-  }, [entries.length])
+const TAB_CONTENT: Record<TabId, CodeLine[]> = {
+  scan: [
+    { type: 'prompt', text: '$ benchlog scan' },
+    { type: 'empty', text: '' },
+    { type: 'comment', text: '⠸ Reading board with camera…' },
+    { type: 'empty', text: '' },
+    { type: 'warn', text: '  ~ w5: A4 → A12  (moved)' },
+    { type: 'warn', text: '  ~ w5: now connected to GPIO12 (strapping pin)' },
+    { type: 'empty', text: '' },
+    { type: 'comment', text: '2 changes detected. Run `benchlog review` to accept.' },
+  ],
+  review: [
+    { type: 'prompt', text: '$ benchlog review' },
+    { type: 'empty', text: '' },
+    { type: 'warn', text: '  ~ w5: A4 → A12  (moved)' },
+    { type: 'comment', text: '    w5 is now connected to GPIO12 — a strapping pin.' },
+    { type: 'comment', text: '    This can prevent the ESP32 from booting.' },
+    { type: 'empty', text: '' },
+    { type: 'comment', text: '  [a] accept  [r] reject  [s] skip  [q] quit' },
+    { type: 'empty', text: '' },
+    { type: 'plain', text: '> a' },
+    { type: 'ok', text: '✓ accepted: w5 moved to A12' },
+  ],
+  commit: [
+    { type: 'prompt', text: '$ benchlog commit -m "Move pot signal to GPIO12"' },
+    { type: 'empty', text: '' },
+    { type: 'plain', text: '[main 4f2a1b3] Move pot signal to GPIO12' },
+    { type: 'plain', text: ' 1 file changed, 2 insertions(+), 1 deletion(-)' },
+    { type: 'empty', text: '' },
+    { type: 'ok', text: '✓ Circuit snapshot saved alongside firmware.' },
+  ],
+  check: [
+    { type: 'prompt', text: '$ benchlog check' },
+    { type: 'empty', text: '' },
+    { type: 'bad', text: '  ✗ w5 is connected to GPIO12 — a strapping pin.' },
+    { type: 'comment', text: '    ESP32 may not boot. Move the wire to a safe GPIO.' },
+    { type: 'empty', text: '' },
+    { type: 'comment', text: '1 check failed.' },
+  ],
+}
 
-  useEffect(() => {
-    if (entries.length === 0) return
-    let alive = true
-    const prev = index > 0 ? entries[index - 1].sha : null
-    Promise.all([getCircuitAt(entries[index].sha), prev ? getCircuitAt(prev) : null]).then(([circuit, previous]) => {
-      if (alive) setBoards({ circuit, previous })
-    })
-    return () => {
-      alive = false
-    }
-  }, [entries, index])
+const TABS: { id: TabId; label: string }[] = [
+  { id: 'scan', label: 'Scan' },
+  { id: 'review', label: 'Review' },
+  { id: 'commit', label: 'Commit' },
+  { id: 'check', label: 'Check' },
+]
 
-  const entry = entries[index]
+function HeroCodePanel() {
+  const [activeTab, setActiveTab] = useState<TabId>('scan')
+  const lines = TAB_CONTENT[activeTab]
+
   return (
-    <figure className="hero-board">
-      <div className="board-frame">{boards && <Breadboard circuit={boards.circuit} previous={boards.previous} />}</div>
-      {entry && (
-        <figcaption>
-          <span>
-            <code>{entry.shortSha}</code>
-            {entry.message}
-          </span>
-          <span>
-            {index + 1} of {entries.length}
-          </span>
-        </figcaption>
-      )}
-    </figure>
+    <div className="hero-code-panel">
+      <div className="hero-code-tabbar">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`hero-code-tab${activeTab === tab.id ? ' active' : ''}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <div className="hero-code-body">
+        {lines.map((line, i) => (
+          <div key={i} className="term-line">
+            <span className="term-lnum">{i + 1}</span>
+            {line.type === 'empty' ? (
+              <span className="term-text">{' '}</span>
+            ) : line.type === 'prompt' ? (
+              <span className="term-text">
+                <span className="term-prompt">$</span>
+                {line.text.slice(1)}
+              </span>
+            ) : (
+              <span className={`term-text term-${line.type}`}>{line.text}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── CLI commands reference ────────────────────────────────────────────────────
+
+const COMMANDS = [
+  { name: 'init',   desc: 'Create a benchlog project in the current git repo' },
+  { name: 'scan',   desc: 'Read the board with the camera; detect wire changes' },
+  { name: 'review', desc: 'Interactively accept or reject each detected change' },
+  { name: 'status', desc: 'Show the current circuit vs the last commit' },
+  { name: 'diff',   desc: 'Show changes between two commits (or HEAD vs last)' },
+  { name: 'commit', desc: 'Save the current circuit + firmware as a new commit' },
+  { name: 'log',    desc: 'List commits with their circuit change summary' },
+  { name: 'check',  desc: 'Run electrical safety checks on the current circuit' },
+  { name: 'camera', desc: 'Manage camera selection and calibration' },
+] as const
+
+const OPTIONS = [
+  { name: '--help',    desc: 'Show this message and exit.' },
+  { name: '--version', desc: 'Show the version and exit.' },
+] as const
+
+function CommandsSection() {
+  return (
+    <section className="commands-section">
+      <div className="section-label">
+        <h2>Commands</h2>
+      </div>
+      <div className="commands-panel">
+        <div className="commands-panel-header">
+          <span className="term-prompt">$</span>
+          {' benchlog --help'}
+        </div>
+        <div className="commands-body">
+          <div className="cmd-line">{' '}</div>
+          <div className="cmd-line">{'  Version control for breadboard prototypes.'}</div>
+          <div className="cmd-line">{' '}</div>
+          <div className="cmd-line">{'  Commands:'}</div>
+          {COMMANDS.map((cmd) => (
+            <div key={cmd.name} className="cmd-line">
+              {'    '}
+              <span className="cmd-name">{cmd.name.padEnd(10)}</span>
+              {cmd.desc}
+            </div>
+          ))}
+          <div className="cmd-line">{' '}</div>
+          <div className="cmd-line">{'  Options:'}</div>
+          {OPTIONS.map((opt) => (
+            <div key={opt.name} className="cmd-line">
+              {'    '}
+              <span className="cmd-name">{opt.name.padEnd(10)}</span>
+              {opt.desc}
+            </div>
+          ))}
+          <div className="cmd-line">{' '}</div>
+        </div>
+      </div>
+    </section>
   )
 }
