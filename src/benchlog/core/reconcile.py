@@ -47,6 +47,7 @@ class PinCheck(BaseModel):
     actual: str | None = Field(description="What the serial agent read; null if the pin wasn't probed.")
     verdict: Verdict
     reason: str = Field(description="Why this GPIO is expected to read that way, e.g. 'tied to GND'.")
+    message: str | None = Field(default=None, description="Warning for a conflict no proposal explains.")
 
 
 class ProposalVerdict(BaseModel):
@@ -67,6 +68,7 @@ class Reconciliation(BaseModel):
     pins: list[PinCheck]
     i2c: list[I2cCheck]
     warnings: list[str] = Field(description="Every conflict, in plain English. Informational: nothing is blocked.")
+    serial_checked: bool = Field(default=False, description="False when there was no serial snapshot to compare with.")
 
 
 # ── Expectations ──────────────────────────────────────────────────────────────
@@ -232,7 +234,7 @@ def reconcile(
     esp32 = _esp32_id(circuit)
     if esp32 is None:
         verdicts = [ProposalVerdict(observation_id=o.id, verdict="not_checked") for o in observations]
-        return Reconciliation(proposals=verdicts, pins=[], i2c=[], warnings=[])
+        return Reconciliation(proposals=verdicts, pins=[], i2c=[], warnings=[], serial_checked=pins is not None)
 
     proposed, applied = _apply_each(circuit, observations)
     expected = _expectations(proposed, esp32)
@@ -267,11 +269,13 @@ def reconcile(
 
     for check in checks.values():
         if check.verdict == "conflict" and check.gpio not in explained:
-            warnings.append(_conflict_message(check, None))
+            check.message = _conflict_message(check, None)
+            warnings.append(check.message)
 
     return Reconciliation(
         proposals=verdicts,
         pins=sorted(checks.values(), key=lambda c: c.gpio),
         i2c=_i2c_checks(proposed, i2c_devices) if i2c_devices is not None else [],
         warnings=warnings,
+        serial_checked=pins is not None,
     )
