@@ -29,13 +29,6 @@ class PinSnapshot:
         except Exception:
             return None
 
-    def is_stable(self, gpio: int, window: "list[PinSnapshot]", tolerance: int = 2) -> bool:
-        """Return True if this GPIO reads the same value across the window (not floating)."""
-        vals = [s.digital.get(gpio) for s in window if gpio in s.digital]
-        if len(vals) < 3:
-            return False
-        return max(vals) - min(vals) <= tolerance  # type: ignore[operator]
-
 
 class SerialReader:
     """Background thread that continuously reads pin snapshots from the ESP32.

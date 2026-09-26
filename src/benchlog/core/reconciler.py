@@ -34,8 +34,6 @@ _GPIO_TO_HOLE: dict[int, str] = {
     17: "I9", 16: "I10", 4: "I11", 2: "I12", 15: "I13",
 }
 
-# Inverse map: hole → gpio
-_HOLE_TO_GPIO: dict[str, int] = {h: g for g, h in _GPIO_TO_HOLE.items()}
 
 # Strip connectivity: holes in the same horizontal strip share a node.
 # We use board.strip() for this, but keep a simple per-row lookup here too.
