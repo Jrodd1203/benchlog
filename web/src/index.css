@@ -69,17 +69,6 @@ body {
   margin: 0;
   min-height: 100vh;
   background-color: var(--paper);
-  /* 5 mm grid with a heavier line every 25 mm, as on a computation pad */
-  background-image:
-    linear-gradient(var(--paper-grid-major) 1px, transparent 1px),
-    linear-gradient(90deg, var(--paper-grid-major) 1px, transparent 1px),
-    linear-gradient(var(--paper-grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--paper-grid) 1px, transparent 1px);
-  background-size:
-    100px 100px,
-    100px 100px,
-    20px 20px,
-    20px 20px;
 }
 
 /* Type scale (1.25 ratio): 15 / 18.75 / 23.4 / 29.3 / 36.6 / 45.8 */
