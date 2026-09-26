@@ -12,10 +12,10 @@ import { Breadboard } from '../board/Breadboard'
 import { StatusLight } from '../components/StatusLight'
 import type { Circuit, ProposalVerdict, Reconciliation, ScanResponse, StatusResponse } from '../types'
 
-type Phase = 'idle' | 'scanning' | 'review' | 'commit' | 'committing' | 'done'
+type Phase = 'idle' | 'scanning' | 'review' | 'accepting' | 'rejecting' | 'commit' | 'committing' | 'done'
 
 /** Requirement 3: the main screen. The virtual board is the main view; there is no live camera feed. */
-export function WorkspaceScreen() {
+export function WorkspaceScreen({ onGoToTimeline }: { onGoToTimeline?: () => void }) {
   const [circuit, setCircuit] = useState<Loaded<Circuit> | null>(null)
   const [previous, setPrevious] = useState<Circuit | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
@@ -66,20 +66,25 @@ export function WorkspaceScreen() {
 
   async function handleAcceptAll() {
     if (!scan) return
+    setScanError(null)
+    setPhase('accepting')
     try {
       const result = await acceptObservations(null)
       if (!alive.current) return
       setCircuit((prev) => prev ? { ...prev, data: result.circuit } : { data: result.circuit, source: 'api' })
       setPhase('commit')
-      // Auto-pre-fill commit message from the backend's plain-English diff summary
       if (result.changes.lines.length > 0) setCommitMsg(result.changes.lines.join('; '))
+      loadStatus()
     } catch (err) {
       if (!alive.current) return
       setScanError(err instanceof Error ? err.message : 'Accept failed')
+      setPhase('review')
     }
   }
 
   async function handleRejectAll() {
+    setScanError(null)
+    setPhase('rejecting')
     try {
       await rejectObservations(null)
       if (!alive.current) return
@@ -90,6 +95,7 @@ export function WorkspaceScreen() {
     } catch (err) {
       if (!alive.current) return
       setScanError(err instanceof Error ? err.message : 'Reject failed')
+      setPhase('review')
     }
   }
 
@@ -148,8 +154,9 @@ export function WorkspaceScreen() {
 
   const reconciliation: Reconciliation | null = scan?.reconciliation ?? null
   const observations = scan?.observations ?? []
+  const conflictProposals = reconciliation?.proposals.filter(p => p.verdict === 'conflict') ?? []
 
-  const showingReview = phase === 'review' || phase === 'commit' || phase === 'committing' || phase === 'done'
+  const showingReview = phase === 'review' || phase === 'accepting' || phase === 'rejecting' || phase === 'commit' || phase === 'committing' || phase === 'done'
 
   return (
     <main className="workspace">
@@ -175,6 +182,12 @@ export function WorkspaceScreen() {
         <StatusLight />
       </div>
 
+      {conflictProposals.length > 0 && phase === 'review' && (
+        <div className="hazard" role="alert">
+          ⚡ {conflictProposals[0].message ?? 'Conflict detected — check reconciliation details below.'}
+        </div>
+      )}
+
       <section className="board-area board-frame" data-scanning={phase === 'scanning' ? 'true' : undefined}>
         {circuit && (
           <Breadboard
@@ -185,7 +198,7 @@ export function WorkspaceScreen() {
       </section>
 
       {/* Review panel */}
-      {(phase === 'review' || phase === 'commit' || phase === 'committing') && scan && (
+      {(phase === 'review' || phase === 'accepting' || phase === 'rejecting' || phase === 'commit' || phase === 'committing') && scan && (
         <div style={{ gridColumn: '1' }}>
           <div className="scan-results">
             <div className="scan-results-header">
@@ -250,14 +263,14 @@ export function WorkspaceScreen() {
                     disabled={phase !== 'review'}
                     onClick={handleAcceptAll}
                   >
-                    Accept All
+                    {phase === 'accepting' ? 'Accepting…' : 'Accept All'}
                   </button>
                   <button
                     className="btn"
                     disabled={phase !== 'review'}
                     onClick={handleRejectAll}
                   >
-                    Reject All
+                    {phase === 'rejecting' ? 'Rejecting…' : 'Reject All'}
                   </button>
                 </>
               )}
@@ -284,14 +297,13 @@ export function WorkspaceScreen() {
                 >
                   {phase === 'committing' ? 'Committing…' : 'Commit'}
                 </button>
-                {/* eslint-disable-next-line jsx-a11y/anchor-is-valid */}
-                <a
-                  href="#"
-                  style={{ fontSize: '0.87rem', color: 'var(--muted)' }}
-                  onClick={(e) => { e.preventDefault(); handleCancelCommit() }}
+                <button
+                  type="button"
+                  className="btn link"
+                  onClick={handleCancelCommit}
                 >
                   Cancel
-                </a>
+                </button>
               </div>
             </div>
           )}
@@ -302,6 +314,11 @@ export function WorkspaceScreen() {
         <div style={{ gridColumn: '1' }}>
           <div className="commit-panel success">
             <span className="commit-success">Committed {commitResult}</span>
+            {onGoToTimeline && (
+              <button type="button" className="btn" onClick={onGoToTimeline} style={{ marginTop: '0.5rem' }}>
+                View in Timeline →
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -345,10 +362,16 @@ export function WorkspaceScreen() {
               </dd>
               <dt>Changes</dt>
               <dd>
-                {status.changes.lines.length > 0
-                  ? `${status.changes.lines.length} line${status.changes.lines.length !== 1 ? 's' : ''}`
-                  : <span className="muted">No uncommitted changes</span>
-                }
+                {status.changes.lines.length > 0 ? (
+                  <span>
+                    {status.changes.lines.slice(0, 2).map((l, i) => (
+                      <div key={i} style={{ fontSize: '0.78rem', color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '14rem' }}>{l}</div>
+                    ))}
+                    {status.changes.lines.length > 2 && (
+                      <span style={{ fontSize: '0.78rem', color: 'var(--muted)', opacity: 0.6 }}>+{status.changes.lines.length - 2} more</span>
+                    )}
+                  </span>
+                ) : <span className="muted">No uncommitted changes</span>}
               </dd>
             </dl>
           )}
