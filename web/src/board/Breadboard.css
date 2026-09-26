@@ -1,0 +1,156 @@
+.breadboard {
+  --bb-body: #eceae4;
+  --bb-hole: #3b3f46;
+  --bb-label: #6b7280;
+  --bb-channel: #d8d5cc;
+  --bb-part-text: #1f2937;
+
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  .breadboard {
+    --bb-body: #2a2e35;
+    --bb-hole: #0f1115;
+    --bb-label: #8b93a0;
+    --bb-channel: #1f2329;
+    --bb-part-text: #e5e7eb;
+  }
+}
+
+.bb-body {
+  fill: var(--bb-body);
+}
+
+.bb-channel {
+  fill: var(--bb-channel);
+}
+
+.bb-rail.plus {
+  fill: rgb(220 38 38 / 0.1);
+}
+
+.bb-rail.minus {
+  fill: rgb(59 130 246 / 0.1);
+}
+
+.bb-label {
+  fill: var(--bb-label);
+  font-size: 1.5px;
+  text-anchor: middle;
+}
+
+.bb-label.rail {
+  font-size: 2px;
+  font-weight: 700;
+}
+
+.bb-label.rail.plus {
+  fill: #dc2626;
+}
+
+.bb-label.rail.minus {
+  fill: #2563eb;
+}
+
+.bb-hole {
+  fill: var(--bb-hole);
+}
+
+.bb-pin {
+  stroke: rgb(0 0 0 / 0.45);
+  stroke-width: 0.15;
+}
+
+.bb-part.esp32 rect {
+  fill: rgb(30 58 138 / 0.18);
+  stroke: #3b82f6;
+  stroke-width: 0.25;
+}
+
+.bb-part line {
+  stroke-width: 0.9;
+  stroke-linecap: round;
+  opacity: 0.8;
+}
+
+.bb-part text {
+  fill: var(--bb-part-text);
+  font-size: 1.5px;
+  text-anchor: middle;
+}
+
+/* A thin light edge under every wire keeps black wires visible on any background. */
+.bb-wire-edge,
+.bb-wire {
+  fill: none;
+  stroke-linecap: round;
+}
+
+.bb-wire-edge {
+  stroke: rgb(255 255 255 / 0.55);
+  stroke-width: 0.95;
+}
+
+.bb-wire {
+  stroke-width: 0.65;
+}
+
+.bb-wire-label rect {
+  fill: rgb(15 17 21 / 0.85);
+}
+
+.bb-wire-label text {
+  fill: #f8fafc;
+  font-size: 1.5px;
+  text-anchor: middle;
+}
+
+.bb-ring {
+  fill: none;
+  stroke-width: 0.3;
+}
+
+.bb-ring.added {
+  stroke: #22c55e;
+  fill: rgb(34 197 94 / 0.15);
+  animation: bb-pulse 1.4s ease-in-out infinite;
+}
+
+.bb-ring.removed {
+  stroke: #ef4444;
+  animation: bb-pulse 1.4s ease-in-out infinite;
+}
+
+.bb-ghost {
+  fill: rgb(239 68 68 / 0.25);
+  stroke: #ef4444;
+  stroke-width: 0.15;
+}
+
+.bb-fade {
+  animation: bb-fade 140ms ease-out;
+}
+
+@keyframes bb-fade {
+  from {
+    opacity: 0.35;
+  }
+}
+
+@keyframes bb-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bb-fade,
+  .bb-ring.added,
+  .bb-ring.removed {
+    animation: none;
+  }
+}
