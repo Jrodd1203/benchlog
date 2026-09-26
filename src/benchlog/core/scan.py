@@ -85,6 +85,11 @@ class ScanStore:
         if latest is not None:
             self._save(self.reference_path, latest)
 
+    def reset(self, reference: BoardReading) -> None:
+        """Start over from `reference` (e.g. after recalibrating), forgetting the latest reading."""
+        self._save(self.reference_path, reference)
+        self.latest_path.unlink(missing_ok=True)
+
     def reference(self, circuit: Circuit) -> BoardReading:
         reading = self._load(self.reference_path)
         if reading is not None:

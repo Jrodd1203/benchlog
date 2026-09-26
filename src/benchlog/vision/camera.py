@@ -154,15 +154,32 @@ def list_cameras(max_index: int = 5) -> list[CameraInfo]:
     return found
 
 
-def preview(cap: cv2.VideoCapture, window: str = "benchlog camera (ESC to close)") -> None:
-    """Live window for aiming the camera: board outline, and whether a scan would capture now."""
+def preview(cap: cv2.VideoCapture, calibration=None, window: str = "benchlog camera (ESC to close)") -> None:
+    """Live window for aiming the camera: board outline and whether a scan would capture now.
+
+    With a calibration, the tracked hole map is drawn too, so you can see the lock holding.
+    """
+    from benchlog.vision.calibration import CalibrationError, draw_holes, track
+
     tracker = _Steadiness()
+    holes, lock_status, last_track = None, "", float("-inf")
     try:
         while True:
             frame = read_frame(cap)
+            now = time.monotonic()
             corners = detect_board_downscaled(frame)
-            steady = tracker.update(frame, corners, time.monotonic())
+            steady = tracker.update(frame, corners, now)
             display = frame.copy()
+            if calibration is not None and now - last_track > 0.3:
+                last_track = now
+                try:
+                    tracking = track(calibration, frame)
+                    holes = tracking.apply(calibration.holes)
+                    lock_status = f"locked (match {tracking.correlation:.2f}, moved {tracking.shift_px:.0f} px)"
+                except CalibrationError as e:
+                    holes, lock_status = None, f"lock lost: {e}"
+            if holes is not None:
+                draw_holes(display, holes)
             if corners is None:
                 status, color = "no board in view", (0, 0, 255)
             elif steady >= 1.0:
@@ -171,7 +188,9 @@ def preview(cap: cv2.VideoCapture, window: str = "benchlog camera (ESC to close)
                 status, color = "board found: hold still", (0, 200, 255)
             if corners is not None:
                 cv2.polylines(display, [corners.astype(np.int32)], True, color, 3)
-            cv2.putText(display, status, (30, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.5, color, 3)
+            for i, text in enumerate(t for t in (status, lock_status) if t):
+                cv2.putText(display, text, (30, 60 + 50 * i), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 0, 0), 6)
+                cv2.putText(display, text, (30, 60 + 50 * i), cv2.FONT_HERSHEY_SIMPLEX, 1.3, color, 3)
             h, w = display.shape[:2]
             cv2.namedWindow(window, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(window, min(w, 1400), round(h * min(w, 1400) / w))

@@ -46,11 +46,20 @@ then captures.
 benchlog camera list          # which camera indices work, at what resolution
 benchlog camera preview 1     # live view: green outline = board steady, ready to scan
 benchlog camera use 1         # remember this camera for this workstation
+benchlog camera calibrate     # map every hole on the live image (board empty), Enter to save
+benchlog camera preview       # check the lock: the hole dots should follow the board if you nudge it
 benchlog scan                 # capture, compare with the last reviewed scan, propose changes
 benchlog review               # accept / reject / edit what it saw
 ```
 
-Capture an empty-board baseline first (below) so holes that always look occupied cancel out.
+**Calibrate once, then scans lock on.** `camera calibrate` draws every hole (rails + red / − blue,
+terminal holes green) on the live image. On an opaque board the dots snap onto the holes by
+themselves; on a translucent board drag the corner handles (or select one with 1–4 and nudge
+with the arrow keys / ijkl) until every dot sits in its hole, then press Enter. Scans then track
+the board if it gets bumped (the camera height must stay the same) and call a hole occupied when
+it looks different from how it looked at calibration. If the board was already built, use
+`benchlog camera calibrate --board-matches-circuit` instead of emptying it. Recalibrate if the
+camera moves or its resolution changes; scans say so when the lock is lost.
 
 ## Baseline capture
 

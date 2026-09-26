@@ -181,7 +181,9 @@ def scan(request: ScanRequest, project: ProjectDep) -> ScanResponse:
     if request.simulate is not None:
         reading = reading_from_circuit(request.simulate, "simulated")
     else:
-        reading = read_board(project.camera_index(request.camera), Path(request.image) if request.image else None)
+        reading = read_board(
+            project.camera_index(request.camera), Path(request.image) if request.image else None, project.calibration_dir
+        )
     observations = project.scan(reading, sync=request.sync)
     return ScanResponse(source=reading.source, warnings=reading.warnings, observations=observations)
 

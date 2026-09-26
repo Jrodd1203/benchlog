@@ -2,7 +2,7 @@
 
     benchlog/circuit.json        committed: the accepted circuit
     .benchlog/observations.json  gitignored: scan results waiting for review
-    .benchlog/calibration.json   gitignored: camera calibration for this workstation
+    .benchlog/calibration/       gitignored: hole map + empty-board reference image for this camera
     .benchlog/config.json        gitignored: this workstation's settings, e.g. {"camera": 1}
     .benchlog/baseline/          gitignored: empty-board capture from `benchlog.vision.capture`
     .benchlog/scans/             gitignored: reference and latest board readings
@@ -24,7 +24,7 @@ from benchlog.core.serialize import dump
 CIRCUIT_PATH = Path("benchlog/circuit.json")
 STATE_DIR = Path(".benchlog")
 OBSERVATIONS_PATH = STATE_DIR / "observations.json"
-CALIBRATION_PATH = STATE_DIR / "calibration.json"
+CALIBRATION_DIR = STATE_DIR / "calibration"
 CONFIG_PATH = STATE_DIR / "config.json"
 
 _observations = TypeAdapter(list[Observation])
@@ -40,6 +40,7 @@ class Project:
         self.circuit_path = repo.root / CIRCUIT_PATH
         self.observations_path = repo.root / OBSERVATIONS_PATH
         self.scans = ScanStore(repo.root / STATE_DIR)
+        self.calibration_dir = repo.root / CALIBRATION_DIR
 
     @classmethod
     def find(cls, start: Path | None = None) -> "Project":

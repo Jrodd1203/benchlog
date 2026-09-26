@@ -16,8 +16,8 @@ from benchlog.core.diff import diff as circuit_diff
 from benchlog.core.models import Circuit, Observation, ObservationKind
 from benchlog.core.project import CIRCUIT_PATH, Project, ProjectError
 from benchlog.core.repo import GitError
-from benchlog.camera import read_board
-from benchlog.core.scan import reading_from_circuit
+from benchlog.camera import load_calibration, read_board
+from benchlog.core.scan import BoardReading, reading_from_circuit
 
 app = typer.Typer(help="Version control for breadboard prototypes.", no_args_is_help=True)
 
@@ -114,7 +114,7 @@ def scan(
     if simulate is not None:
         reading = reading_from_circuit(Circuit.model_validate_json(simulate.read_text()), f"simulated {simulate.name}")
     else:
-        reading = read_board(project.camera_index(camera), image)
+        reading = read_board(project.camera_index(camera), image, project.calibration_dir)
     for warning in reading.warnings:
         print(f"[yellow]warning:[/yellow] {escape(warning)}")
 
@@ -327,21 +327,66 @@ def camera_use(index: int = typer.Argument(..., help="Camera index from `benchlo
 @camera_app.command("preview")
 @_handle_errors
 def camera_preview(index: int | None = typer.Argument(None, help="Camera index (default: the chosen one).")) -> None:
-    """Live view for aiming the camera; shows when the board is detected and steady."""
+    """Live view for aiming the camera; with a calibration, shows the tracked hole map too."""
     camera = _vision_camera()
+    try:
+        project = Project.find()
+    except (ProjectError, GitError):
+        project = None
     if index is None:
-        try:
-            index = Project.find().camera_index()
-        except (ProjectError, GitError):
-            index = 0
+        index = project.camera_index() if project else 0
+    calibration = load_calibration(project.calibration_dir if project else None)
     try:
         cap = camera.open_camera(index)
         try:
-            camera.preview(cap)
+            camera.preview(cap, calibration)
         finally:
             cap.release()
     except camera.CameraError as e:
         raise ProjectError(str(e)) from e
+
+
+@camera_app.command("calibrate")
+@_handle_errors
+def camera_calibrate(
+    index: int | None = typer.Argument(None, help="Camera index (default: the chosen one)."),
+    board_matches_circuit: bool = typer.Option(
+        False, "--board-matches-circuit", help="Calibrate with the circuit built instead of an empty board."
+    ),
+) -> None:
+    """Map every hole on the live image and save it (board empty, or matching the circuit)."""
+    camera = _vision_camera()
+    from benchlog.core.pairing import occupied_holes
+    from benchlog.vision.calibration import run_calibration
+
+    project = Project.find()
+    index = project.camera_index(index)
+    occupied = sorted(occupied_holes(project.load_circuit())) if board_matches_circuit else []
+    if board_matches_circuit:
+        print(f"The board must match the circuit exactly ({len(occupied)} occupied holes).")
+    else:
+        print("The board must be EMPTY (or use --board-matches-circuit).")
+    print("Line the dots up with the holes (they snap on), then press Enter.")
+    try:
+        cap = camera.open_camera(index)
+        try:
+            calibration = run_calibration(cap, camera=index, occupied=occupied)
+        finally:
+            cap.release()
+    except camera.CameraError as e:
+        raise ProjectError(str(e)) from e
+    if calibration is None:
+        print("calibration cancelled; nothing saved")
+        return
+    calibration.save(project.calibration_dir)
+    project.set_config("camera", index)
+    # The board as calibrated is the new starting point for scans.
+    source = "calibration (board matching circuit)" if board_matches_circuit else "calibration (empty board)"
+    project.scans.reset(BoardReading(occupied=occupied, source=source))
+    project.save_observations([])
+    w, h = calibration.frame_size
+    print(f"[green]saved[/green] hole map for camera {index} at {w}x{h} to {project.calibration_dir}")
+    print("scans now track the board from this calibration; check it with `benchlog camera preview`")
 
 
 @app.command()
