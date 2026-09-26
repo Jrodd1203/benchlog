@@ -98,9 +98,9 @@ def reconcile(
 
         # Check ESP32 agreement
         if obs.kind == ObservationKind.ADDED:
-            esp32_agrees = serial.gpio_stable_high(gpio) or serial.gpio_stable_low(gpio)
+            esp32_agrees = serial.gpio_stable_high(gpio)
         else:  # REMOVED
-            esp32_agrees = serial.gpio_floating(gpio)
+            esp32_agrees = serial.gpio_stable_low(gpio)
 
         if esp32_agrees:
             # Both agree: boost confidence
