@@ -34,7 +34,7 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className="app" data-screen={screen}>
       <nav className="topbar">
         <button type="button" className="brand" onClick={() => setScreen('projects')}>
           benchlog
