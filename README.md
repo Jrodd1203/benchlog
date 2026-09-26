@@ -61,6 +61,22 @@ it looks different from how it looked at calibration. If the board was already b
 `benchlog camera calibrate --board-matches-circuit` instead of emptying it. Recalibrate if the
 camera moves or its resolution changes; scans say so when the lock is lost.
 
+### Double-checking with the ESP32
+
+With the serial agent flashed on the ESP32 (`agent/`) and plugged in, benchlog checks the camera's
+work against what the ESP32's pins actually read. The port is found automatically (or set it with
+`benchlog serial use PORT`; `benchlog serial list` / `probe` help troubleshoot).
+
+- **Scan:** each change shows "ESP32 confirms", "ESP32 disagrees" (with what to fix) or "can't tell".
+- **Commit (a merge check):** the circuit being committed is checked against the board. A failure
+  blocks the commit (`--force` commits anyway); no ESP32 means the check is skipped, not failed.
+  The result is recorded in the commit message as `ESP32-Check: passed`, `failed (forced)` or
+  `skipped`. The UI's commit (`POST /api/commit`) behaves the same, with `"force": true`.
+
+The port can only be open in one program: while `benchlog serve` is connected to the ESP32, CLI
+scans and commits find it busy (scan and commit from the UI instead). `benchlog scan --no-serial`
+skips the check for a scan.
+
 ## Baseline capture
 
 Scans an empty BB830 ("mobile check deposit" style: line the board up in a guide outline,

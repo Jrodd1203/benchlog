@@ -47,6 +47,24 @@ def available_ports() -> list[PortInfo]:
     return [PortInfo(device=p.device, description=p.description or "") for p in comports()]
 
 
+# USB-serial chips on ESP32 dev boards (CP210x, CH340, FTDI, native USB) and how they're named.
+_ESP32_PORT_HINTS = ("usbserial", "slab_usbtouart", "wchusbserial", "usbmodem", "ttyusb", "ttyacm", "cp210", "ch340")
+
+
+def find_esp32_port() -> str | None:
+    """The first serial port that looks like an ESP32 dev board, or None."""
+    try:
+        ports = available_ports()
+    except AgentError:
+        return None
+    for port in ports:
+        name = f"{port.device} {port.description}".lower()
+        # On macOS every device appears twice; /dev/cu.* is the one to open (tty.* waits for carrier).
+        if any(h in name for h in _ESP32_PORT_HINTS) and not port.device.startswith("/dev/tty."):
+            return port.device
+    return None
+
+
 class SerialService:
     def __init__(
         self,
@@ -164,3 +182,19 @@ class SerialService:
             if self._client is None:
                 return
             self.ping()
+
+
+def snapshot_once(port: str, client_factory: Callable[[str], AgentClient] | None = None) -> SerialSnapshot:
+    """Connect, probe and scan I2C once, then disconnect (for the CLI). Raises AgentError.
+
+    Opening the port reboots the ESP32, so this takes a few seconds.
+    """
+    service = SerialService(client_factory=client_factory or AgentClient, ping_interval=None)
+    try:
+        service.connect(port)
+        snapshot = service.snapshot()
+    finally:
+        service.close()
+    if snapshot is None:
+        raise AgentError(service.status().last_error or "the serial agent didn't answer")
+    return snapshot
