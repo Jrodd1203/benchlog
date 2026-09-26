@@ -2,5 +2,11 @@
   "board": "bb830",
   "components": [],
   "schema_version": 1,
-  "wires": []
+  "wires": [
+    {
+      "a": "H11",
+      "b": "H51",
+      "id": "w1"
+    }
+  ]
 }
