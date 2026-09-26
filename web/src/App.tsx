@@ -1,6 +1,10 @@
 import { useState } from 'react'
 import './App.css'
+import { CommitsScreen } from './screens/CommitsScreen'
+import { DiffScreen } from './screens/DiffScreen'
 import { ProjectsScreen } from './screens/ProjectsScreen'
+import { ReviewScreen } from './screens/ReviewScreen'
+import { SerialScreen } from './screens/SerialScreen'
 import { SetupScreen } from './screens/SetupScreen'
 import { StubScreen } from './screens/StubScreen'
 import { STUBS, type StubId } from './screens/stubs'
@@ -8,7 +12,7 @@ import { TimelineScreen } from './screens/TimelineScreen'
 import { WorkspaceScreen } from './screens/WorkspaceScreen'
 import type { ProjectSummary } from './types'
 
-type Screen = 'projects' | 'setup' | 'workspace' | 'timeline' | StubId
+type Screen = 'projects' | 'setup' | 'workspace' | 'review' | 'commits' | 'timeline' | 'diff' | 'serial' | StubId
 
 /** Tabs shown once a project is open — only built screens. */
 const TABS: { id: Exclude<Screen, 'projects'>; label: string }[] = [
@@ -58,8 +62,16 @@ export default function App() {
 
       {screen === 'projects' && <ProjectsScreen onOpen={open} />}
       {screen === 'setup' && <SetupScreen onDone={() => setScreen('workspace')} />}
-      {screen === 'workspace' && <WorkspaceScreen />}
+      {screen === 'workspace' && <WorkspaceScreen onReview={() => setScreen('review')} />}
+      {screen === 'review' && (
+        <ReviewScreen onCommit={() => setScreen('commits')} onWorkspace={() => setScreen('workspace')} />
+      )}
+      {screen === 'commits' && (
+        <CommitsScreen onReview={() => setScreen('review')} onTimeline={() => setScreen('timeline')} />
+      )}
       {screen === 'timeline' && <TimelineScreen />}
+      {screen === 'diff' && <DiffScreen />}
+      {screen === 'serial' && <SerialScreen />}
       {screen in STUBS && <StubScreen section={STUBS[screen as StubId]} />}
     </div>
   )

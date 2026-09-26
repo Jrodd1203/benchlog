@@ -3,7 +3,7 @@
 // (curved wires, rail tints, labels on new wires, fade between commits) comes from the first
 // timelapse MVP; geometry comes from ./geometry so it matches the camera's view of the board.
 
-import { useMemo } from 'react'
+import { type MouseEvent, useMemo } from 'react'
 import type { Circuit, Component, Hole } from '../types'
 import {
   BOARD_H,
@@ -62,11 +62,17 @@ export function Breadboard({
   circuit,
   previous,
   className,
+  highlight,
+  onHoleClick,
 }: {
   circuit: Circuit
   /** When given, highlight what changed between `previous` and `circuit`. */
   previous?: Circuit | null
   className?: string
+  /** Holes to ring in amber, e.g. ones the camera wasn't sure about. */
+  highlight?: Hole[]
+  /** Makes every hole clickable (e.g. "pick the right hole"). */
+  onHoleClick?: (hole: Hole) => void
 }) {
   const occupied = useMemo(() => occupiedHoles(circuit), [circuit])
   const { added, removed } = useMemo(() => {
@@ -81,9 +87,18 @@ export function Breadboard({
   const channelY = (columnY('E') + columnY('F')) / 2
   const labelRows = [1, ...Array.from({ length: 12 }, (_, i) => (i + 1) * 5)]
 
+  // One handler for all holes: each hole element carries data-hole.
+  const handleClick = onHoleClick
+    ? (e: MouseEvent<SVGSVGElement>) => {
+        const hole = (e.target as Element).closest('[data-hole]')?.getAttribute('data-hole')
+        if (hole) onHoleClick(hole)
+      }
+    : undefined
+
   return (
     <svg
-      className={`breadboard${className ? ` ${className}` : ''}`}
+      onClick={handleClick}
+      className={`breadboard${onHoleClick ? ' pickable' : ''}${className ? ` ${className}` : ''}`}
       viewBox={`-6 -2 ${BOARD_W + 8} ${BOARD_H + 4}`}
       role="img"
       aria-label="Virtual BB830 breadboard"
@@ -122,7 +137,7 @@ export function Breadboard({
         {/* empty holes */}
         {[...HOLES].map(([name, p]) =>
           occupied.has(name) || removed.has(name) ? null : (
-            <rect key={name} className="bb-hole" x={p.x - HOLE_R} y={p.y - HOLE_R} width={HOLE_R * 2} height={HOLE_R * 2} rx={0.15}>
+            <rect key={name} data-hole={name} className="bb-hole" x={p.x - HOLE_R} y={p.y - HOLE_R} width={HOLE_R * 2} height={HOLE_R * 2} rx={0.15}>
               <title>{name}</title>
             </rect>
           ),
@@ -177,11 +192,15 @@ export function Breadboard({
           return (
             <g key={h}>
               {added.has(h) && <circle className="bb-ring added" cx={p.x} cy={p.y} r={HOLE_R + 0.9} />}
-              <circle className="bb-pin" cx={p.x} cy={p.y} r={HOLE_R} fill={info.color}>
+              <circle data-hole={h} className="bb-pin" cx={p.x} cy={p.y} r={HOLE_R} fill={info.color}>
                 <title>{`${h} — ${info.label}`}</title>
               </circle>
             </g>
           )
+        })}
+        {highlight?.map((h) => {
+          const p = holePosition(h)
+          return p ? <circle key={`hl-${h}`} className="bb-ring highlight" cx={p.x} cy={p.y} r={HOLE_R + 1.1} /> : null
         })}
       </g>
     </svg>

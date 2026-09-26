@@ -1,38 +1,91 @@
-import { useEffect, useState } from 'react'
-import { getCircuit, type Loaded } from '../api'
+import { useCallback, useEffect, useState } from 'react'
+import { demoScan, getCircuit, getStatus, scan, type Loaded } from '../api'
 import { Breadboard } from '../board/Breadboard'
-import { FutureButton } from '../components/FutureButton'
 import { StatusLight } from '../components/StatusLight'
-import type { Circuit } from '../types'
+import type { Circuit, StatusResponse } from '../types'
 
 /** Requirement 3: the main screen. The virtual board is the main view; there is no live camera feed. */
-export function WorkspaceScreen() {
+export function WorkspaceScreen({ onReview }: { onReview: () => void }) {
   const [circuit, setCircuit] = useState<Loaded<Circuit> | null>(null)
+  const [status, setStatus] = useState<StatusResponse | null>(null)
+  const [scanning, setScanning] = useState(false)
+  const [scanError, setScanError] = useState<string | null>(null)
+  const [scanNote, setScanNote] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    const [c, s] = await Promise.all([getCircuit(), getStatus().catch(() => null)])
+    setCircuit(c)
+    setStatus(s)
+  }, [])
 
   useEffect(() => {
     let alive = true
-    getCircuit().then((c) => {
-      if (alive) setCircuit(c)
+    Promise.all([getCircuit(), getStatus().catch(() => null)]).then(([c, s]) => {
+      if (!alive) return
+      setCircuit(c)
+      setStatus(s)
     })
     return () => {
       alive = false
     }
   }, [])
 
+  const runScan = async (demo: boolean) => {
+    setScanning(true)
+    setScanError(null)
+    setScanNote(null)
+    try {
+      const result = await (demo ? demoScan() : scan())
+      if (result.observations.length > 0) {
+        onReview()
+        return
+      }
+      setScanNote('Scan finished: nothing changed on the board since the last scan.')
+      await refresh()
+    } catch (e) {
+      setScanError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  const offline = circuit?.source === 'example'
+
   return (
     <main className="workspace">
       <div className="toolbar">
-        <FutureButton primary needs="POST /api/scan with the calibrated camera + serial probe">
-          Scan
-        </FutureButton>
+        <button type="button" className="btn primary" onClick={() => runScan(false)} disabled={scanning || offline}>
+          {scanning ? 'Scanning…' : 'Scan'}
+        </button>
+        {status && status.pending > 0 && (
+          <button type="button" className="btn" onClick={onReview}>
+            Review {status.pending} {status.pending === 1 ? 'change' : 'changes'}
+          </button>
+        )}
         <span className="spacer" />
-        {circuit?.source === 'example' && (
+        {offline && (
           <span className="chip" title="The API isn't running (benchlog serve), so example data is shown.">
             example data
           </span>
         )}
         <StatusLight />
       </div>
+
+      {scanning && <p className="notice">Taking a photo and probing the ESP32…</p>}
+      {scanNote && <p className="notice">{scanNote}</p>}
+      {scanError && (
+        <div className="notice error" role="alert">
+          <p>
+            <strong>Scan failed.</strong> {scanError}
+          </p>
+          <p className="muted small">
+            No camera set up yet? Run a demo scan: it pretends the pot signal wire moved from A4 to A12.
+          </p>
+          <button type="button" className="btn" onClick={() => runScan(true)} disabled={scanning}>
+            Run a demo scan
+          </button>
+        </div>
+      )}
 
       <section className="board-area board-frame">{circuit && <Breadboard circuit={circuit.data} />}</section>
 
@@ -48,6 +101,16 @@ export function WorkspaceScreen() {
             <dd>{circuit.data.components.map((c) => c.id).join(', ') || 'none'}</dd>
             <dt>Wires</dt>
             <dd>{circuit.data.wires.length}</dd>
+            {status && (
+              <>
+                <dt>Branch</dt>
+                <dd>{status.branch}</dd>
+                <dt>Last commit</dt>
+                <dd>{status.head ? status.head.subject : 'none yet'}</dd>
+                <dt>Uncommitted</dt>
+                <dd>{status.changes.lines.length ? `${status.changes.lines.length} changes` : 'none'}</dd>
+              </>
+            )}
           </dl>
         )}
       </aside>
