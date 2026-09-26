@@ -18,10 +18,12 @@ from benchlog.core.checks.store import check_project
 from benchlog.core.diff import CircuitDiff, describe
 from benchlog.core.diff import diff as circuit_diff
 from benchlog.core.models import Circuit, Observation, ObservationKind
-from benchlog.core.project import CIRCUIT_PATH, Project, ProjectError
+from benchlog.core.project import CIRCUIT_PATH, HardwareCheck, Project, ProjectError
 from benchlog.core.repo import GitError
 from benchlog.camera import load_calibration, read_board
+from benchlog.core.reconcile import Reconciliation
 from benchlog.core.scan import BoardReading, reading_from_circuit
+from benchlog.serial.service import SerialSnapshot
 
 app = typer.Typer(help="Version control for breadboard prototypes.", no_args_is_help=True)
 
@@ -99,10 +101,69 @@ def _describe_observation(o: Observation) -> str:
     return text
 
 
-def _print_observations(observations: list[Observation]) -> None:
+_VERDICT_TEXT = {
+    "confirmed": ("green", "ESP32 confirms"),
+    "conflict": ("red", "ESP32 disagrees"),
+    "no_expectation": ("dim", "ESP32 can't tell"),
+}
+
+
+def _print_observations(observations: list[Observation], reconciliation: "Reconciliation | None" = None) -> None:
+    verdicts = {v.observation_id: v for v in reconciliation.proposals} if reconciliation else {}
     for o in observations:
         color = "yellow" if o.uncertain_holes else "green"
-        print(f"  [{color}]{escape(_describe_observation(o))}[/{color}]")
+        line = f"  [{color}]{escape(_describe_observation(o))}[/{color}]"
+        verdict = verdicts.get(o.id)
+        if verdict is not None and verdict.verdict in _VERDICT_TEXT:
+            vcolor, text = _VERDICT_TEXT[verdict.verdict]
+            gpios = f" ({', '.join(f'GPIO{g}' for g in verdict.gpios)})" if verdict.gpios else ""
+            line += f"  [{vcolor}]{text}{gpios}[/{vcolor}]"
+        print(line)
+        if verdict is not None and verdict.message:
+            print(f"      [red]{escape(verdict.message)}[/red]")
+
+
+def _serial_snapshot(project: Project, use_serial: bool) -> tuple["SerialSnapshot | None", str | None]:
+    """Read the ESP32 agent (saved port, else auto-detected). Never raises: returns (None, why) instead."""
+    if not use_serial:
+        return None, None
+    from benchlog.serial.agent_client import AgentError, PortBusy
+    from benchlog.serial.service import find_esp32_port, snapshot_once
+
+    port = project.config().get("serial_port") or find_esp32_port()
+    if not port:
+        return None, None
+
+    try:
+        return snapshot_once(port), None
+    except PortBusy:
+        return None, f"serial port {port} is busy (is `benchlog serve` connected to it?); camera only"
+    except AgentError as e:
+        return None, f"ESP32 not read ({e}); camera only"
+
+
+def _print_hardware_check(check: "HardwareCheck") -> None:
+    if check.status == "passed":
+        print("[green]ESP32 check: passed[/green] (the board matches the circuit)")
+    elif check.status == "skipped":
+        print(f"[dim]ESP32 check: skipped ({escape(check.reason or '')})[/dim]")
+    else:
+        print(f"[red]ESP32 check: failed[/red] ({len(check.problems)} problem{'s' * (len(check.problems) != 1)})")
+        for problem in check.problems:
+            print(f"  [red]- {escape(problem)}[/red]")
+
+
+def _print_serial(snapshot: "SerialSnapshot | None", note: str | None, reconciliation: "Reconciliation") -> None:
+    if note:
+        print(f"[yellow]serial:[/yellow] {escape(note)}")
+    if snapshot is not None:
+        probed = [g for g, state in snapshot.probe.pins.items() if state != "unsafe"]
+        i2c = ", ".join(snapshot.i2c.devices) or "none"
+        print(f"[dim]serial: ESP32 on {escape(snapshot.port)}, {len(probed)} pins probed, I2C devices: {i2c}[/dim]")
+    explained = {v.message for v in reconciliation.proposals if v.message}
+    for warning in reconciliation.warnings:
+        if warning not in explained:  # per-observation messages are printed under the observation
+            print(f"[red]ESP32:[/red] {escape(warning)}")
 
 
 @app.command()
@@ -113,8 +174,15 @@ def scan(
     simulate: Path | None = typer.Option(None, "--simulate", help="Pretend the board looks like this circuit file."),
     sync: bool = typer.Option(False, "--sync", help="Record the board as matching the circuit; propose nothing."),
     debug: bool = typer.Option(False, "--debug", help="Explain what the camera saw and save images of it."),
+    use_serial: bool = typer.Option(
+        True, "--serial/--no-serial", help="Check the changes against the ESP32 (port from `benchlog serial use`)."
+    ),
 ) -> None:
-    """Capture the board and propose changes since the last reviewed scan."""
+    """Capture the board and propose changes since the last reviewed scan.
+
+    With an ESP32 serial agent set up (`benchlog serial use PORT`), each change the camera proposes
+    is checked against what the ESP32's pins actually read.
+    """
     project = Project.find()
     debug_lines: list[str] = []
     if simulate is not None:
@@ -138,14 +206,23 @@ def scan(
 
     observations = project.scan(reading, sync=sync)
     if sync:
+        project.check_with_serial([], None, None)  # nothing pending: clear old verdicts
         print(f"board recorded as matching the circuit ({len(reading.occupied)} occupied holes)")
         return
+    snapshot, note = _serial_snapshot(project, use_serial)
+    reconciliation = project.check_with_serial(
+        observations, snapshot.probe.pins if snapshot else None, snapshot.i2c.devices if snapshot else None
+    )
+    if debug and snapshot is not None:
+        pins = ", ".join(f"GPIO{g} {state}" for g, state in sorted(snapshot.probe.pins.items()))
+        print(f"[dim]debug:[/dim] ESP32 pins: {escape(pins)}")
+    _print_serial(snapshot, note, reconciliation)
     if not observations:
         print("no changes seen since the last reviewed scan")
         return
     n = len(observations)
     print(f"[bold]{n} change{'s' * (n != 1)} to review[/bold] ({escape(reading.source)})")
-    _print_observations(observations)
+    _print_observations(observations, reconciliation)
     print("review with `benchlog review accept|reject|edit`")
 
 
@@ -165,12 +242,13 @@ def review(ctx: typer.Context) -> None:
     """List observations waiting for review."""
     if ctx.invoked_subcommand is not None:
         return
-    pending = Project.find().pending_observations()
+    project = Project.find()
+    pending = project.pending_observations()
     if not pending:
         print("nothing to review")
         return
     print(f"[bold]{len(pending)} pending[/bold]")
-    _print_observations(pending)
+    _print_observations(pending, project.reconciliation())
 
 
 @review_app.command()
@@ -267,14 +345,28 @@ def diff(
 def commit(
     message: str = typer.Option(..., "-m", "--message"),
     firmware: list[Path] = typer.Option([], "-f", "--firmware", help="Firmware files or folders to include."),
+    force: bool = typer.Option(False, "--force", help="Commit even if the ESP32 check fails."),
 ) -> None:
-    """Commit the current circuit (and any firmware paths given)."""
+    """Commit the current circuit (and any firmware paths given).
+
+    First checks the circuit against the real board through the ESP32 (like a merge check): a
+    failure blocks the commit unless --force. The result is recorded in the commit message.
+    """
     project = Project.find()
     pending = project.pending_observations()
     if pending:
         print(f"[yellow]warning:[/yellow] {len(pending)} observation(s) still pending; committing the accepted circuit")
+    if project.circuit_at("HEAD") == project.load_circuit() and not firmware:
+        raise ProjectError("nothing to commit: the circuit matches HEAD")
+    snapshot, note = _serial_snapshot(project, use_serial=True)
+    check = project.hardware_check(
+        snapshot.probe.pins if snapshot else None, snapshot.i2c.devices if snapshot else None, reason=note or "no ESP32 found"
+    )
+    _print_hardware_check(check)
+    if check.status == "failed" and not force:
+        raise ProjectError("ESP32 check failed, so nothing was committed. Fix the board or the circuit, or commit anyway with --force")
     before = project.baseline()
-    c = project.commit(message, firmware=[p.resolve() for p in firmware])
+    c = project.commit(message, firmware=[p.resolve() for p in firmware], trailer=check.trailer(forced=force))
     print(f"[green]\\[{c.short_sha}][/green] {escape(c.subject)}")
     d = circuit_diff(before, project.load_circuit())
     print(f"  {_summary(d)}")
@@ -308,6 +400,63 @@ def log(limit: int | None = typer.Option(None, "-n", help="Show at most this man
             _summary(circuit_diff(before, after)),
         )
     Console().print(table)
+
+
+serial_app = typer.Typer(help="Set up the ESP32 serial agent that double-checks what the camera sees.")
+app.add_typer(serial_app, name="serial")
+
+
+@serial_app.command("list")
+@_handle_errors
+def serial_list() -> None:
+    """Show serial ports (the ESP32 is usually a usbserial or SLAB_USBtoUART port)."""
+    from benchlog.serial.agent_client import AgentError
+    from benchlog.serial.service import available_ports
+
+    try:
+        ports = available_ports()
+    except AgentError as e:
+        raise ProjectError(str(e)) from e
+    if not ports:
+        print("no serial ports found; is the ESP32 plugged in?")
+        return
+    try:
+        chosen = Project.find().config().get("serial_port")
+    except (ProjectError, GitError):
+        chosen = None
+    for port in ports:
+        mark = "  [green](chosen)[/green]" if port.device == chosen else ""
+        print(f"{escape(port.device)}  {escape(port.description)}{mark}")
+    print("test one with `benchlog serial probe PORT`, then pick it with `benchlog serial use PORT`")
+
+
+@serial_app.command("use")
+@_handle_errors
+def serial_use(port: str = typer.Argument(..., help="Port from `benchlog serial list`.")) -> None:
+    """Read the ESP32 on this port during every scan (saved for this workstation)."""
+    Project.find().set_config("serial_port", port)
+    print(f"scans will check changes against the ESP32 on {port}")
+
+
+@serial_app.command("probe")
+@_handle_errors
+def serial_probe(port: str | None = typer.Argument(None, help="Port (default: the chosen one).")) -> None:
+    """Read every safe pin and scan I2C once, to check the agent works."""
+    from benchlog.serial.agent_client import AgentError
+    from benchlog.serial.service import snapshot_once
+
+    if port is None:
+        port = Project.find().config().get("serial_port")
+        if not port:
+            raise ProjectError("no port chosen; pass one, or pick one with `benchlog serial use PORT`")
+    try:
+        snapshot = snapshot_once(port)
+    except AgentError as e:
+        raise ProjectError(str(e)) from e
+    print(f"agent {snapshot.agent or '?'} on {escape(snapshot.port)}")
+    for gpio, state in sorted(snapshot.probe.pins.items()):
+        print(f"  GPIO{gpio}: {state}")
+    print(f"I2C (SDA {snapshot.i2c.sda}, SCL {snapshot.i2c.scl}): {', '.join(snapshot.i2c.devices) or 'no devices'}")
 
 
 camera_app = typer.Typer(help="Pick and aim the camera over the bench (webcam or Continuity Camera).")

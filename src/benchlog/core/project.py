@@ -4,6 +4,7 @@
     .benchlog/observations.json  gitignored: scan results waiting for review
     .benchlog/calibration/       gitignored: hole map + empty-board reference image for this camera
     .benchlog/config.json        gitignored: this workstation's settings, e.g. {"camera": 1}
+    .benchlog/reconciliation.json  gitignored: the ESP32's verdicts on the pending observations
     .benchlog/baseline/          gitignored: empty-board capture from `benchlog.vision.capture`
     .benchlog/scans/             gitignored: reference and latest board readings, and the serial
                                  readings taken with the latest scan (serial.json)
@@ -15,13 +16,15 @@
 import json
 from pathlib import Path
 
-from pydantic import TypeAdapter
+from typing import Literal
+
+from pydantic import BaseModel, TypeAdapter
 
 from benchlog.core.board import TEMPLATES
 from benchlog.core.board_state import BoardStateStore, fingerprint
 from benchlog.core.models import Circuit, Hole, Observation, ObservationKind, ObservationStatus
 from benchlog.core.pairing import apply_observations
-from benchlog.core.reconcile import SerialReadings, serial_record
+from benchlog.core.reconcile import Reconciliation, SerialReadings, reconcile, serial_record
 from benchlog.core.repo import Commit, GitError, Repo
 from benchlog.core.scan import BoardReading, MisreadError, ScanStore
 from benchlog.core.scan import scan as run_scan
@@ -32,8 +35,21 @@ STATE_DIR = Path(".benchlog")
 OBSERVATIONS_PATH = STATE_DIR / "observations.json"
 CALIBRATION_DIR = STATE_DIR / "calibration"
 CONFIG_PATH = STATE_DIR / "config.json"
+RECONCILIATION_PATH = STATE_DIR / "reconciliation.json"
 
 _observations = TypeAdapter(list[Observation])
+
+
+class HardwareCheck(BaseModel):
+    """Does the real board (as the ESP32 senses it) match a circuit? Gates commits, like a merge check."""
+
+    status: Literal["passed", "failed", "skipped"]
+    problems: list[str] = []
+    reason: str | None = None  # why it was skipped
+
+    def trailer(self, forced: bool = False) -> str:
+        """Git trailer recording the result in the commit message."""
+        return f"ESP32-Check: {self.status}" + (" (forced)" if forced and self.status == "failed" else "")
 
 
 class ProjectError(RuntimeError):
@@ -171,6 +187,24 @@ class Project:
             self.board_confirmed()  # a clean scan: the board matches the circuit
         return observations
 
+    def check_with_serial(
+        self, observations: list[Observation], pins: dict[int, str] | None, i2c_devices: list[str] | None
+    ) -> Reconciliation:
+        """Run the reconciler on a scan's observations against what the ESP32 sensed, and keep the result.
+
+        `pins`/`i2c_devices` are None when no serial agent was read: every verdict is then "not_checked".
+        """
+        result = reconcile(self.load_circuit(), observations, pins, i2c_devices)
+        path = self.repo.root / RECONCILIATION_PATH
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(result.model_dump_json(indent=2) + "\n")
+        return result
+
+    def reconciliation(self) -> Reconciliation | None:
+        """The ESP32's verdicts from the last scan, if it has any."""
+        path = self.repo.root / RECONCILIATION_PATH
+        return Reconciliation.model_validate_json(path.read_text()) if path.exists() else None
+
     def _select_pending(self, ids: list[str] | None) -> tuple[list[Observation], list[Observation]]:
         """(all observations, the pending ones named by `ids`, or every pending one if None)."""
         observations = self.observations()
@@ -255,13 +289,28 @@ class Project:
         """Commits that changed the circuit, newest first."""
         return self.repo.log(path=self.circuit_path, limit=limit)
 
-    def commit(self, message: str, firmware: list[Path] = ()) -> Commit:
-        """Stage the circuit (and any firmware paths) and commit."""
+    def commit(self, message: str, firmware: list[Path] = (), trailer: str | None = None) -> Commit:
+        """Stage the circuit (and any firmware paths) and commit, with an optional trailer line."""
         self.repo.add(self.circuit_path, *firmware)
         if not self.repo.has_staged_changes():
             raise ProjectError("nothing to commit: the circuit and firmware match HEAD")
         board_matched = self.board_matches_working()
-        commit = self.repo.commit(message)
+        commit = self.repo.commit(f"{message}\n\n{trailer}" if trailer else message)
         if board_matched:
             self.board_confirmed()  # the board matched what was just committed
         return commit
+
+    def hardware_check(self, pins: dict[int, str] | None, i2c_devices: list[str] | None, reason: str | None = None) -> HardwareCheck:
+        """Check the working circuit against what the ESP32 sensed (None: no reading, so skipped).
+
+        Fails on any pin that reads differently from what the circuit implies, and on declared I2C
+        parts that don't answer. Undeclared I2C devices are only reported by scans, not failures.
+        """
+        if pins is None:
+            return HardwareCheck(status="skipped", reason=reason or "no ESP32 reading")
+        result = reconcile(self.load_circuit(), [], pins, i2c_devices)
+        if not result.pins:
+            return HardwareCheck(status="skipped", reason="the circuit has no ESP32 to check against")
+        problems = [p.message for p in result.pins if p.verdict == "conflict" and p.message]
+        problems += [f"{c.component} doesn't answer on I2C (expected at {c.address})" for c in result.i2c if c.status == "missing"]
+        return HardwareCheck(status="failed" if problems else "passed", problems=problems)
