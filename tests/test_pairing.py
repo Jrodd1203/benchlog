@@ -43,10 +43,17 @@ def test_empty_to_working_round_trip_holes() -> None:
     working = load("working")
     changes = hole_changes_between(Circuit(), working)
     observations = observations_from_occupancy(Circuit(), changes)
-    # Without registered components, the camera sees 6 colored wires plus component pins.
+    # Without registered components, the camera sees 6 colored wires plus component pins; straight
+    # runs (the ESP32's pin rows) come out as flat-wire guesses. Every changed hole is accounted for.
     assert all(o.kind.value == "added" for o in observations)
-    seen = {h for o in observations for h in o.after.values()}
-    assert seen == {c.hole for c in changes}
+    seen = set()
+    for o in observations:
+        ends = list(o.after.values())
+        seen.update(ends)
+        if len(ends) == 2 and ends[0][0] == ends[1][0] and ends[0][1] not in "+-":
+            lo, hi = sorted(int(e[1:]) for e in ends)
+            seen.update(f"{ends[0][0]}{r}" for r in range(lo, hi + 1))
+    assert {c.hole for c in changes} <= seen
 
 
 def test_no_changes() -> None:
@@ -120,3 +127,22 @@ def test_apply_added_and_removed_wires() -> None:
     ids = {w.id for w in result.wires}
     assert "w6" not in ids and "w7" in ids
     assert next(w for w in result.wires if w.id == "w7").model_dump(include={"a", "b"}) == {"a": "A40", "b": "A45"}
+
+
+def test_flat_wire_covering_holes_is_one_wire() -> None:
+    # A pre-cut jumper lying on C37..C43: every hole under it looks filled.
+    changes = [filled(f"C{r}") for r in range(37, 44)]
+    [obs] = observations_from_occupancy(Circuit(), changes)
+    assert (obs.kind.value, obs.after, obs.uncertain_holes) == ("added", {"a": "C37", "b": "C43"}, ["C37", "C43"])
+
+
+def test_flat_wire_across_a_row_and_leftovers() -> None:
+    # One wire across row 10 (A..E), plus an unrelated pair of holes elsewhere.
+    changes = [filled(f"{c}10") for c in "ABCDE"] + [filled("J40", "red"), filled("J50", "red")]
+    observations = observations_from_occupancy(Circuit(), changes)
+    assert sorted((o.after["a"], o.after["b"]) for o in observations) == [("A10", "E10"), ("J40", "J50")]
+
+
+def test_two_adjacent_holes_are_not_a_flat_run() -> None:
+    [obs] = observations_from_occupancy(Circuit(), [filled("C37"), filled("C38")])
+    assert obs.after == {"a": "C37", "b": "C38"} and obs.uncertain_holes == []

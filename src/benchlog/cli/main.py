@@ -108,15 +108,29 @@ def scan(
     camera: int | None = typer.Option(None, "--camera", help="Camera index (default: `benchlog camera use`, else 0)."),
     simulate: Path | None = typer.Option(None, "--simulate", help="Pretend the board looks like this circuit file."),
     sync: bool = typer.Option(False, "--sync", help="Record the board as matching the circuit; propose nothing."),
+    debug: bool = typer.Option(False, "--debug", help="Explain what the camera saw and save images of it."),
 ) -> None:
     """Capture the board and propose changes since the last reviewed scan."""
     project = Project.find()
+    debug_lines: list[str] = []
     if simulate is not None:
         reading = reading_from_circuit(Circuit.model_validate_json(simulate.read_text()), f"simulated {simulate.name}")
     else:
-        reading = read_board(project.camera_index(camera), image, project.calibration_dir)
+        debug_dir = project.scans.dir / "debug" if debug else None
+        reading = read_board(project.camera_index(camera), image, project.calibration_dir, debug_dir=debug_dir, debug_lines=debug_lines)
     for warning in reading.warnings:
         print(f"[yellow]warning:[/yellow] {escape(warning)}")
+    if debug:
+        pending = project.pending_observations()
+        reference = project.scans.latest() if not pending and project.scans.latest() else project.scans.reference(project.load_circuit())
+        filled = sorted(set(reading.occupied) - set(reference.occupied))
+        emptied = sorted(set(reference.occupied) - set(reading.occupied))
+        for line in debug_lines + [
+            f"camera reads occupied: {reading.occupied or 'none'}",
+            f"compared with {reference.source}: {reference.occupied or 'none'} occupied",
+            f"so filled: {filled or 'none'}, emptied: {emptied or 'none'}",
+        ]:
+            print(f"[dim]debug:[/dim] {escape(line)}")
 
     observations = project.scan(reading, sync=sync)
     if sync:
