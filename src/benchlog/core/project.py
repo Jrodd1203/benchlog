@@ -14,6 +14,7 @@ from pathlib import Path
 from pydantic import TypeAdapter
 
 from benchlog.core.board import TEMPLATES
+from benchlog.core.board_state import BoardStateStore, fingerprint
 from benchlog.core.models import Circuit, Hole, Observation, ObservationKind, ObservationStatus
 from benchlog.core.pairing import apply_observations
 from benchlog.core.repo import Commit, GitError, Repo
@@ -41,6 +42,8 @@ class Project:
         self.observations_path = repo.root / OBSERVATIONS_PATH
         self.scans = ScanStore(repo.root / STATE_DIR)
         self.calibration_dir = repo.root / CALIBRATION_DIR
+        self.state_dir = repo.root / STATE_DIR
+        self.board_state = BoardStateStore(self.state_dir)
 
     @classmethod
     def find(cls, start: Path | None = None) -> "Project":
@@ -70,15 +73,33 @@ class Project:
             dump(Circuit(board=board), project.circuit_path)
             created.append(CIRCUIT_PATH.as_posix())
         (repo.root / STATE_DIR).mkdir(exist_ok=True)
+        if project.ensure_state_ignored():
+            created.append(f".gitignore entry {STATE_DIR.as_posix()}/")
+        return project, created
 
-        gitignore = repo.root / ".gitignore"
+    def ensure_state_ignored(self) -> bool:
+        """Add .benchlog/ to .gitignore if it isn't there. Returns True if it was added."""
+        gitignore = self.repo.root / ".gitignore"
         existing = gitignore.read_text() if gitignore.exists() else ""
         entry = f"{STATE_DIR.as_posix()}/"
-        if entry not in existing.splitlines():
-            prefix = "" if not existing or existing.endswith("\n") else "\n"
-            gitignore.write_text(f"{existing}{prefix}{entry}\n")
-            created.append(f".gitignore entry {entry}")
-        return project, created
+        if entry in existing.splitlines():
+            return False
+        prefix = "" if not existing or existing.endswith("\n") else "\n"
+        gitignore.write_text(f"{existing}{prefix}{entry}\n")
+        return True
+
+    def matches_head(self) -> bool:
+        """True if the working circuit is exactly the committed one."""
+        return self.repo.head() is not None and self.circuit_at("HEAD") == self.load_circuit()
+
+    def board_confirmed(self) -> None:
+        """Record that the physical board matches the working circuit right now."""
+        self.ensure_state_ignored()
+        self.board_state.set(self.repo.head() if self.matches_head() else None, self.load_circuit())
+
+    def board_matches_working(self) -> bool:
+        """True if the board was last confirmed to match exactly the working circuit."""
+        return self.board_state.load().circuit_fingerprint == fingerprint(self.load_circuit())
 
     def config(self) -> dict:
         path = self.repo.root / CONFIG_PATH
@@ -131,12 +152,15 @@ class Project:
             self.scans.save_latest(reading)
             self.scans.promote_latest()
             self.save_observations([])
+            self.board_confirmed()
             return []
         try:
             observations = run_scan(self.load_circuit(), self.scans, reading, self.pending_observations())
         except MisreadError as e:
             raise ProjectError(str(e)) from e
         self.save_observations(observations)
+        if not observations:
+            self.board_confirmed()  # a clean scan: the board matches the circuit
         return observations
 
     def _select_pending(self, ids: list[str] | None) -> tuple[list[Observation], list[Observation]]:
@@ -166,11 +190,20 @@ class Project:
         except ValueError as e:
             raise ProjectError(str(e)) from e
         self.save_circuit(circuit)
-        return self._set_status(observations, chosen, ObservationStatus.ACCEPTED)
+        accepted = self._set_status(observations, chosen, ObservationStatus.ACCEPTED)
+        self._reviewed()
+        return accepted
 
     def reject_observations(self, ids: list[str] | None = None) -> list[Observation]:
         observations, chosen = self._select_pending(ids)
-        return self._set_status(observations, chosen, ObservationStatus.REJECTED)
+        rejected = self._set_status(observations, chosen, ObservationStatus.REJECTED)
+        self._reviewed()
+        return rejected
+
+    def _reviewed(self) -> None:
+        """Once every scan proposal is reviewed, the working circuit describes the board."""
+        if not self.pending_observations():
+            self.board_confirmed()
 
     def edit_observation(self, obs_id: str, ends: dict[str, Hole]) -> Observation:
         """Set or correct wire ends of a pending added/moved wire, e.g. {"b": "J40"}.
@@ -200,4 +233,8 @@ class Project:
         self.repo.add(self.circuit_path, *firmware)
         if not self.repo.has_staged_changes():
             raise ProjectError("nothing to commit: the circuit and firmware match HEAD")
-        return self.repo.commit(message)
+        board_matched = self.board_matches_working()
+        commit = self.repo.commit(message)
+        if board_matched:
+            self.board_confirmed()  # the board matched what was just committed
+        return commit
