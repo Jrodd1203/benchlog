@@ -66,7 +66,7 @@ DEFAULT_OUT_DIR = Path(".benchlog/baseline")
 
 SAMPLE_R = max(3, round(PITCH_PX * 0.22))  # half-size of the patch read at a hole centre
 _BG_BLUR_KSIZE = round(PITCH_PX * 0.8) | 1  # odd kernel; smooths over thin rail lines
-CONTRAST_RATIO_THRESH = 0.18  # empty hole must be this much darker than its surroundings
+CONTRAST_RATIO_THRESH = 0.35  # empty hole must be this much darker than its surroundings
 SATURATION_THRESH = 70.0  # 0-255; coloured wire insulation saturates well above this
 RELIABLE_CONTRAST_MEDIAN = 0.08  # below this, contrast-based emptiness is not trustworthy
 MAX_RELIABLE_RESIDUAL_PX = 5.0  # above this, per-hole sampling may land off-hole
