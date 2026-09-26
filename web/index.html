@@ -24,7 +24,7 @@
       align-items: center;
       gap: 16px;
     }
-    header h1 { font-size: 15px; font-weight: 600; color: #7dd3fc; letter-spacing: 0.05em; }
+    header h1 { font-size: 17px; font-weight: 600; color: #7dd3fc; letter-spacing: 0.05em; text-shadow: 0 0 20px rgba(125,211,252,0.4); }
     #branch-label {
       background: #1e3a5f;
       color: #7dd3fc;
@@ -48,6 +48,10 @@
     #board-wrapper {
       padding: 20px 20px 8px;
       overflow-x: auto;
+      box-shadow: 0 0 40px rgba(34,197,94,0.07);
+      border: 1px solid #1a3d20;
+      border-radius: 8px;
+      margin: 8px 12px 0;
     }
 
     #board-svg {
@@ -56,10 +60,44 @@
       overflow: visible;
     }
 
-    /* ── timeline ────────────────────────────────────────────── */
+    @keyframes board-fade-in {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    .board-fade { animation: board-fade-in 0.12s ease; }
+
+    @keyframes diff-pulse {
+      0%, 100% { opacity: 0.9; }
+      50%       { opacity: 0.3; }
+    }
+    .diff-added-ring   { animation: diff-pulse 1.8s infinite; }
+    .diff-removed-ring { animation: diff-pulse 1.8s infinite; }
+
+    /* ── hazard banner ──────────────────────────────────────────── */
+    #hazard-banner {
+      display: none;
+      background: #f59e0b;
+      color: #1c0f00;
+      padding: 7px 20px;
+      font-size: 12px;
+      font-weight: 600;
+      border-left: 4px solid #d97706;
+      width: 100%;
+      margin: 0;
+    }
+    #hazard-banner.visible { display: block; }
+
+    /* ── timeline ────────────────────────────────────────────────── */
     #timeline-section {
       padding: 12px 20px 16px;
       border-top: 1px solid #1e2a3a;
+    }
+
+    #hero-label {
+      color: #475569;
+      font-size: 11px;
+      text-align: center;
+      margin-bottom: 10px;
     }
 
     #timeline-track {
@@ -142,15 +180,20 @@
       font-size: 11px;
     }
 
+    #kbd-hint { color: #475569; font-size: 10px; margin-left: auto; }
+
     /* ── commit info panel ───────────────────────────────────── */
     #info-panel {
       padding: 10px 20px 16px;
       border-top: 1px solid #1e2a3a;
+      border-left: 3px solid #1e3a5f;
       min-height: 80px;
+      transition: border-left-color 0.2s;
     }
+    #info-panel.electrical { border-left-color: #f59e0b; }
 
     #commit-message {
-      font-size: 13px;
+      font-size: 15px;
       font-weight: 600;
       color: #f1f5f9;
       margin-bottom: 4px;
@@ -220,6 +263,8 @@
     <svg id="board-svg" xmlns="http://www.w3.org/2000/svg"></svg>
   </div>
 
+  <div id="hazard-banner">⚡ Electrical change — check connections before flashing</div>
+
   <div id="legend">
     <div class="legend-item"><div class="legend-dot" style="background:#3b82f6;border-color:#3b82f6"></div> ESP32</div>
     <div class="legend-item"><div class="legend-dot" style="background:#d97706;border-color:#d97706"></div> pot / resistor</div>
@@ -230,6 +275,7 @@
   </div>
 
   <div id="timeline-section">
+    <p id="hero-label">scrub or press space to replay commit history</p>
     <div id="timeline-track">
       <div id="timeline-commits"></div>
       <input id="slider" type="range" min="0" max="0" value="0">
@@ -237,7 +283,7 @@
     <div id="timeline-controls">
       <button id="prev-btn" title="Previous commit">◀</button>
       <button id="play-btn" title="Play/pause">▶</button>
-      <button id="next-btn" title="Next commit">▶</button>
+      <button id="next-btn" title="Next commit">⏭</button>
       <span id="snapshot-counter">– / –</span>
       <span id="speed-label">speed</span>
       <select id="speed-select">
@@ -246,6 +292,7 @@
         <option value="600">2×</option>
         <option value="300">4×</option>
       </select>
+      <span id="kbd-hint">← → step · space play</span>
     </div>
   </div>
 
@@ -263,7 +310,7 @@ const PITCH     = 18;   // px between holes
 const HOLE_R    = 4.5;  // hole circle radius
 const MX        = 36;   // left/right margin
 const MY        = 24;   // top/bottom margin
-const N_ROWS    = 63;   // terminal rows (1..63)
+const N_ROWS    = 40;   // terminal rows (1..40) — demo uses up to row 22
 const RAIL_LEN  = 50;   // rail holes (1..50)
 const RAIL_OFF  = 7;    // rail holes start at terminal row offset (center rail under terminal)
 
@@ -342,7 +389,12 @@ function makeSVG(circuit, prevCircuit) {
   svg.setAttribute('viewBox', `0 0 ${SVG_W} ${SVG_H}`);
   svg.setAttribute('width', SVG_W);
   svg.setAttribute('height', SVG_H);
+
+  // fade transition
+  svg.classList.remove('board-fade');
   svg.innerHTML = '';
+  void svg.offsetWidth; // force reflow so animation re-triggers
+  svg.classList.add('board-fade');
 
   const ns = 'http://www.w3.org/2000/svg';
   const g = (tag, attrs, parent) => {
@@ -362,13 +414,19 @@ function makeSVG(circuit, prevCircuit) {
   const boardH = (COL_Y['J'] - COL_Y['A']) * PITCH + PITCH * 1.3;
   g('rect', { x: boardX, y: boardY, width: boardW, height: boardH, fill: '#1a3d20', rx: 4 });
 
-  // rail backgrounds
+  // rail backgrounds + power rail tints
   for (const [rail, rOff] of [['L+','L-'], ['R+','R-']]) {
     const y1 = MY + COL_Y[rail] * PITCH - PITCH * 0.55;
     const rh = PITCH * 1.6 + PITCH * 0.3;  // two rows + gap
     const railX = MX + RAIL_OFF * PITCH - PITCH * 0.7;
     const railW = RAIL_LEN * PITCH + PITCH * 0.4;
     g('rect', { x: railX, y: y1, width: railW, height: rh, fill: '#141f14', rx: 3 });
+    // faint color tints: red for + rail, blue for - rail
+    const rowH = PITCH * 0.95;
+    const yPlus  = MY + COL_Y[rail] * PITCH - rowH * 0.5;
+    const yMinus = MY + COL_Y[rOff] * PITCH - rowH * 0.5;
+    g('rect', { x: railX, y: yPlus,  width: railW, height: rowH, fill: 'rgba(220,38,38,0.09)', rx: 2 });
+    g('rect', { x: railX, y: yMinus, width: railW, height: rowH, fill: 'rgba(59,130,246,0.09)', rx: 2 });
   }
 
   // center divider
@@ -384,7 +442,6 @@ function makeSVG(circuit, prevCircuit) {
   // rail labels
   for (const rail of ['L+','L-','R+','R-']) {
     const y = MY + COL_Y[rail] * PITCH;
-    const color = rail.includes('+') ? '#3b1c1c' : '#1c1c3b';
     g('text', { x: MX - PITCH * 0.45, y: y + 4, fill: rail.includes('+') ? '#7f3f3f' : '#3f3f7f', 'font-size': 8, 'text-anchor': 'end', 'font-family': 'monospace' }).textContent = rail;
   }
 
@@ -394,6 +451,9 @@ function makeSVG(circuit, prevCircuit) {
     g('text', { x, y: boardY - 3, fill: '#1e3a2a', 'font-size': 8, 'text-anchor': 'middle', 'font-family': 'monospace' }).textContent = row;
     g('text', { x, y: boardY + boardH + 10, fill: '#1e3a2a', 'font-size': 8, 'text-anchor': 'middle', 'font-family': 'monospace' }).textContent = row;
   }
+
+  // compute diff sets before wires so wire labels can use them
+  const { added, removed } = diffHoles(prevCircuit, circuit);
 
   // ── wires ──
   for (const wire of (circuit.wires || [])) {
@@ -409,15 +469,24 @@ function makeSVG(circuit, prevCircuit) {
       stroke: color, 'stroke-width': 2.5, fill: 'none', opacity: 0.75,
       'stroke-linecap': 'round',
     });
+    // floating label for wires with an endpoint in the added set
+    if (added.has(wire.a) || added.has(wire.b)) {
+      const labelText = wire.label || wire.id;
+      const lx = mx2;
+      const ly = my2 - 8;
+      const textW = Math.max(labelText.length * 5.8, 28);
+      const labelGroup = g('g', {});
+      g('rect', { x: lx - textW / 2 - 2, y: ly - 10, width: textW + 4, height: 14, fill: '#0e1117', rx: 2, opacity: 0.85 }, labelGroup);
+      g('text', { x: lx, y: ly, 'font-size': 10, fill: '#f8fafc', 'text-anchor': 'middle', 'font-family': 'monospace' }, labelGroup).textContent = labelText;
+    }
   }
 
   // ── diff ghost holes (removed) ──
-  const { added, removed } = diffHoles(prevCircuit, circuit);
   const prevHoles = circuitHoles(prevCircuit || { components: [], wires: [] });
   for (const hole of removed) {
     const p = holeXY(hole);
     if (!p) continue;
-    g('circle', { cx: p.x, cy: p.y, r: HOLE_R + 3.5, fill: 'none', stroke: '#ef4444', 'stroke-width': 1.5, opacity: 0.8 });
+    g('circle', { cx: p.x, cy: p.y, r: HOLE_R + 3.5, fill: 'none', stroke: '#ef4444', 'stroke-width': 1.5, opacity: 0.8, class: 'diff-removed-ring' });
     g('circle', { cx: p.x, cy: p.y, r: HOLE_R, fill: '#3f0e0e', stroke: '#ef4444', 'stroke-width': 1 });
   }
 
@@ -430,10 +499,11 @@ function makeSVG(circuit, prevCircuit) {
     const count  = isRail ? RAIL_LEN : N_ROWS;
     const startX = isRail ? MX + RAIL_OFF * PITCH : MX;
     for (let i = 0; i < count; i++) {
-      const hname = isRail ? `${colKey}${i + 1}` : `${colKey}${i + 1}`;
+      const x = startX + i * PITCH;
+      if (x >= SVG_W) continue; // don't render off-screen holes
+      const hname = `${colKey}${i + 1}`;
       if (holes.has(hname)) continue; // will draw below
       if (removed.has(hname)) continue; // already drawn as ghost
-      const x = startX + i * PITCH;
       const y = MY + ySlot * PITCH;
       g('circle', { cx: x, cy: y, r: HOLE_R, fill: '#0d2010', stroke: '#1a3d20', 'stroke-width': 0.5 });
     }
@@ -443,9 +513,9 @@ function makeSVG(circuit, prevCircuit) {
   for (const [hole, info] of holes) {
     const p = holeXY(hole);
     if (!p) continue;
-    // glow for added
+    // pulsing glow ring for added holes
     if (added.has(hole)) {
-      g('circle', { cx: p.x, cy: p.y, r: HOLE_R + 4, fill: '#22c55e22', stroke: '#22c55e', 'stroke-width': 1.5, opacity: 0.9 });
+      g('circle', { cx: p.x, cy: p.y, r: HOLE_R + 4, fill: '#22c55e22', stroke: '#22c55e', 'stroke-width': 1.5, opacity: 0.9, class: 'diff-added-ring' });
     }
     g('circle', { cx: p.x, cy: p.y, r: HOLE_R, fill: info.color, stroke: '#0e1117', 'stroke-width': 0.8 });
     // dim inner dot
@@ -517,6 +587,8 @@ const diffEl    = document.getElementById('diff-lines');
 const pipsEl    = document.getElementById('timeline-commits');
 const branchEl  = document.getElementById('branch-label');
 const statusEl  = document.getElementById('status-badge');
+const hazardEl  = document.getElementById('hazard-banner');
+const infoPanel = document.getElementById('info-panel');
 
 function buildPips() {
   pipsEl.innerHTML = '';
@@ -548,11 +620,19 @@ async function goTo(idx) {
   const d = new Date(snap.ts);
   metaEl.textContent = `${snap.sha.slice(0, 7)}  ·  ${snap.author}  ·  ${d.toLocaleString()}${demoMode ? '  [demo]' : ''}`;
 
+  // hazard banner + info panel electrical class
+  hazardEl.classList.toggle('visible', !!snap.electrical);
+  infoPanel.classList.toggle('electrical', !!snap.electrical);
+
   diffEl.innerHTML = '';
   for (const line of snap.diffLines) {
     const li = document.createElement('li');
-    li.textContent = line;
-    if (snap.electrical && (line.includes('connected') || line.includes('disconnected'))) li.classList.add('electrical');
+    let text = line;
+    if (snap.electrical && (line.includes('connected') || line.includes('disconnected'))) {
+      li.classList.add('electrical');
+      text = '⚡ ' + text;
+    }
+    li.textContent = text;
     diffEl.appendChild(li);
   }
 
