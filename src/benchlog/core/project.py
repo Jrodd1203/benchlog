@@ -12,7 +12,9 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from benchlog.core.models import Circuit, Observation, ObservationStatus
+from benchlog.core.board import TEMPLATES
+from benchlog.core.models import Circuit, Hole, Observation, ObservationKind, ObservationStatus
+from benchlog.core.pairing import apply_observations
 from benchlog.core.repo import Commit, GitError, Repo
 from benchlog.core.scan import ScanStore
 from benchlog.core.serialize import dump
@@ -101,6 +103,58 @@ class Project:
 
     def pending_observations(self) -> list[Observation]:
         return [o for o in self.observations() if o.status == ObservationStatus.PENDING]
+
+    def _select_pending(self, ids: list[str] | None) -> tuple[list[Observation], list[Observation]]:
+        """(all observations, the pending ones named by `ids`, or every pending one if None)."""
+        observations = self.observations()
+        pending = {o.id: o for o in observations if o.status == ObservationStatus.PENDING}
+        if ids is None:
+            return observations, list(pending.values())
+        unknown = [i for i in ids if i not in pending]
+        if unknown:
+            raise ProjectError(f"no pending observation {', '.join(unknown)}")
+        return observations, [pending[i] for i in dict.fromkeys(ids)]
+
+    def _set_status(self, observations: list[Observation], chosen: list[Observation], status: ObservationStatus) -> None:
+        chosen_ids = {o.id for o in chosen}
+        self.save_observations(
+            [o.model_copy(update={"status": status}) if o.id in chosen_ids else o for o in observations]
+        )
+
+    def accept_observations(self, ids: list[str] | None = None) -> list[Observation]:
+        """Apply pending observations to the circuit. All or nothing: if one can't be applied, none are."""
+        observations, chosen = self._select_pending(ids)
+        try:
+            circuit = apply_observations(self.load_circuit(), chosen)
+        except ValueError as e:
+            raise ProjectError(str(e)) from e
+        self.save_circuit(circuit)
+        self._set_status(observations, chosen, ObservationStatus.ACCEPTED)
+        return chosen
+
+    def reject_observations(self, ids: list[str] | None = None) -> list[Observation]:
+        observations, chosen = self._select_pending(ids)
+        self._set_status(observations, chosen, ObservationStatus.REJECTED)
+        return chosen
+
+    def edit_observation(self, obs_id: str, ends: dict[str, Hole]) -> Observation:
+        """Set or correct wire ends of a pending added/moved wire, e.g. {"b": "J40"}.
+
+        The user has now looked at this wire, so the whole observation counts as confirmed.
+        """
+        observations, [obs] = self._select_pending([obs_id])
+        if obs.object_type != "wire" or obs.kind == ObservationKind.REMOVED:
+            raise ProjectError(f"{obs_id}: only added or moved wires can be edited")
+        bad_ends = set(ends) - {"a", "b"}
+        if bad_ends:
+            raise ProjectError(f"{obs_id}: a wire's ends are 'a' and 'b', not {', '.join(sorted(bad_ends))}")
+        template = TEMPLATES[self.load_circuit().board]
+        bad_holes = [h for h in ends.values() if not template.is_valid(h)]
+        if bad_holes:
+            raise ProjectError(f"not a hole on {template.id}: {', '.join(bad_holes)}")
+        edited = obs.model_copy(update={"after": {**(obs.after or {}), **ends}, "uncertain_holes": [], "confidence": 1.0})
+        self.save_observations([edited if o.id == obs_id else o for o in observations])
+        return edited
 
     def history(self, limit: int | None = None) -> list[Commit]:
         """Commits that changed the circuit, newest first."""
