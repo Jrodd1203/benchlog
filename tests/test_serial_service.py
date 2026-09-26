@@ -165,3 +165,43 @@ def test_route_ports(client, monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(serial_routes, "available_ports", lambda: [PortInfo(device="/dev/cu.x", description="CP2102")])
     assert client.get("/api/serial/ports").json() == [{"device": "/dev/cu.x", "description": "CP2102"}]
+
+
+def test_scan_includes_serial_verdicts(tmp_path, monkeypatch: pytest.MonkeyPatch, service: SerialService, board: Board):
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    import json
+    import shutil
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from benchlog.core.project import Project
+    from benchlog.core.repo import Repo
+    from benchlog.server.app import app
+
+    examples = Path(__file__).parent.parent / "examples" / "circuits"
+    path = tmp_path / "project"
+    repo = Repo.init(path)
+    repo.run("config", "user.name", "Test")
+    repo.run("config", "user.email", "test@example.com")
+    project, _ = Project.init(path)
+    shutil.copy(examples / "working.json", project.circuit_path)
+    project.commit("Working circuit")
+    monkeypatch.setenv("BENCHLOG_PROJECT", str(path))
+
+    # The camera sees a new wire from GPIO18 (I7's row) to the GND rail, but the fake agent
+    # reads GPIO18 as floating, so the wire is flagged as maybe not seated.
+    service.connect("/dev/fake")
+    simulated = json.loads((examples / "working.json").read_text())
+    simulated["wires"].append({"id": "w7", "a": "J7", "b": "R-7"})
+    app.state.serial = service
+    try:
+        data = TestClient(app).post("/api/scan", json={"simulate": simulated}).json()
+    finally:
+        app.state.serial = None
+    assert data["serial"]["probe"]["pins"]["18"] == "floating"
+    [obs] = data["observations"]
+    [verdict] = data["reconciliation"]["proposals"]
+    assert verdict["observation_id"] == obs["id"] and verdict["verdict"] == "conflict"
+    assert "may not be seated" in data["reconciliation"]["warnings"][0]

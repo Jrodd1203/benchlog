@@ -25,6 +25,7 @@ class ComponentType(str, Enum):
     RESISTOR = "resistor"
     LED = "led"
     POTENTIOMETER = "potentiometer"
+    I2C_MODULE = "i2c_module"  # sensor/display breakout; SDA and SCL pins, address in `value` or known `model`
 
 
 class Component(_Model):
