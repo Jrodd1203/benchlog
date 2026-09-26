@@ -7,7 +7,7 @@
 import workingExample from '../../examples/circuits/working.json'
 import { stripOf } from './board/geometry'
 import { BUILD_STAGES } from './mock/buildStages'
-import type { Circuit, ProjectSummary, SerialState, TimelineEntry } from './types'
+import type { AcceptResponse, Circuit, ProjectSummary, ScanResponse, SerialState, StatusResponse, TimelineEntry } from './types'
 
 /** Where a piece of data came from, so the UI can say when it's showing example data. */
 export type Source = 'api' | 'example'
@@ -131,6 +131,52 @@ function describeChanges(prev: Circuit, curr: Circuit): { lines: string[]; elect
   }
   for (const id of prevWires.keys()) if (!curr.wires.some((w) => w.id === id)) lines.push(`${id} removed`)
   return { lines, electrical }
+}
+
+export async function getStatus(): Promise<StatusResponse | null> {
+  try { return await getJson<StatusResponse>('/api/status') }
+  catch { return null }
+}
+
+export async function postScan(simulate?: Circuit): Promise<ScanResponse> {
+  const body: Record<string, unknown> = {}
+  if (simulate) body.simulate = simulate
+  const res = await fetch('/api/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`scan failed: ${res.status}`)
+  return res.json() as Promise<ScanResponse>
+}
+
+export async function acceptObservations(ids: string[] | null): Promise<AcceptResponse> {
+  const res = await fetch('/api/observations/accept', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  })
+  if (!res.ok) throw new Error(`accept failed: ${res.status}`)
+  return res.json() as Promise<AcceptResponse>
+}
+
+export async function rejectObservations(ids: string[] | null): Promise<void> {
+  const res = await fetch('/api/observations/reject', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  })
+  if (!res.ok) throw new Error(`reject failed: ${res.status}`)
+}
+
+export async function postCommit(message: string): Promise<{ commit: { sha: string; short_sha: string; subject: string } }> {
+  const res = await fetch('/api/commit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, firmware: [] }),
+  })
+  if (!res.ok) throw new Error(`commit failed: ${res.status}`)
+  return res.json()
 }
 
 // ── NOT WIRED: no backend endpoint yet (Person 1: project list/create/open) ──────────────────

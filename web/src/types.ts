@@ -80,6 +80,44 @@ export interface ProjectSummary {
 
 export type SerialState = 'connected' | 'disconnected' | 'unknown'
 
+export interface StatusResponse {
+  branch: string
+  head: { sha: string; short_sha: string; author: string; date: string; subject: string } | null
+  committed: boolean
+  changes: { diff: unknown; lines: string[] }
+  pending: number
+}
+
+export type ScanVerdict = 'confirmed' | 'conflict' | 'no_expectation' | 'not_checked'
+
+export interface ProposalVerdict {
+  observation_id: string
+  verdict: ScanVerdict
+  message: string | null
+  gpios: number[]
+}
+
+export interface Reconciliation {
+  proposals: ProposalVerdict[]
+  pins: { gpio: number; expected: string | null; actual: string | null; verdict: string; reason: string }[]
+  i2c: { address: string; component: string | null; status: string }[]
+  warnings: string[]
+}
+
+export interface ScanResponse {
+  source: string
+  warnings: string[]
+  observations: Observation[]
+  serial: { connected: boolean; port: string | null } | null
+  reconciliation: Reconciliation
+}
+
+export interface AcceptResponse {
+  accepted: Observation[]
+  circuit: Circuit
+  changes: { diff: unknown; lines: string[] }
+}
+
 /** One commit on the timeline, oldest first. */
 export interface TimelineEntry {
   sha: string
