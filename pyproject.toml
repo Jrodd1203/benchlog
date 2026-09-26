@@ -17,7 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 server = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
-vision = ["opencv-contrib-python>=4.10", "numpy>=1.26"]
+vision = ["opencv-contrib-python>=4.10", "numpy>=1.26", "pyserial>=3.5"]
 dev = ["pytest>=8"]
 all = ["benchlog[server,vision,dev]"]
 
