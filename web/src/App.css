@@ -747,6 +747,159 @@ select {
   color: var(--warn);
 }
 
+/* ── Workflow + Commands sections (scroll below hero) ────────────────────── */
+
+.workflow-section {
+  margin-bottom: 2.5rem;
+}
+
+.hero-code-panel {
+  background: #0d1117;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.hero-code-tabbar {
+  display: flex;
+  padding: 0 0.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.hero-code-tab {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.5rem 0.8rem 0.45rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: rgba(255, 255, 255, 0.38);
+  cursor: pointer;
+  white-space: nowrap;
+  margin-bottom: -1px;
+}
+
+.hero-code-tab:hover {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.hero-code-tab.active {
+  color: rgba(255, 255, 255, 0.9);
+  border-bottom-color: #86ade6;
+}
+
+.hero-code-body {
+  padding: 1rem 0;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+}
+
+.term-line {
+  display: flex;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  padding-right: 1rem;
+}
+
+.term-lnum {
+  min-width: 2ch;
+  text-align: right;
+  flex-shrink: 0;
+  padding: 0 0.75rem;
+  color: rgba(255, 255, 255, 0.18);
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+  margin-right: 0.75rem;
+  user-select: none;
+}
+
+.term-text {
+  color: rgba(255, 255, 255, 0.82);
+  white-space: pre;
+}
+
+.term-prompt { color: #86ade6; }
+.term-ok     { color: #62c07a; }
+.term-bad    { color: #ef6a5f; }
+.term-warn   { color: #e0a345; }
+.term-comment { color: rgba(255, 255, 255, 0.45); }
+
+.commands-section {
+  margin-bottom: 2.5rem;
+}
+
+.commands-panel {
+  background: #0d1117;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.commands-panel-header {
+  padding: 0.55rem 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.commands-body {
+  padding: 0 1rem 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.cmd-line {
+  line-height: 1.65;
+  white-space: pre;
+}
+
+.cmd-name { color: #86ade6; }
+
+/* Light-mode: swap panels to cream surface + design tokens */
+@media (prefers-color-scheme: light) {
+  .hero-code-panel,
+  .commands-panel {
+    background: var(--surface);
+    border-color: var(--border);
+  }
+
+  .hero-code-tabbar {
+    background: var(--surface-2);
+    border-bottom-color: var(--rule);
+  }
+
+  .hero-code-tab        { color: var(--muted); }
+  .hero-code-tab:hover  { color: var(--text); }
+
+  .hero-code-tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
+  .term-lnum    { color: var(--rule);   border-right-color: var(--border); }
+  .term-text    { color: var(--text); }
+  .term-prompt  { color: var(--accent); }
+  .term-ok      { color: var(--ok); }
+  .term-bad     { color: var(--bad); }
+  .term-warn    { color: var(--warn); }
+  .term-comment { color: var(--muted); }
+
+  .commands-panel-header {
+    background: var(--surface-2);
+    border-bottom-color: var(--rule);
+    color: var(--text);
+  }
+
+  .commands-body { color: var(--muted); }
+  .cmd-name      { color: var(--accent); }
+}
+
 @media (max-width: 860px) {
   .hero {
     grid-template-columns: 1fr;
