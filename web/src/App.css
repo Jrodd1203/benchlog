@@ -171,7 +171,7 @@
 /* Not-wired-yet buttons: dashed pencil outline + "soon" tag, no action. */
 .btn.future {
   border-style: dashed;
-  cursor: help;
+  cursor: not-allowed;
 }
 
 .soon-tag {
@@ -225,9 +225,9 @@
 
 .hero-sub {
   font-family: var(--font-display);
-  font-size: 1.45rem;
+  font-size: clamp(1.4rem, 2.8vw, 2rem);
   color: var(--accent);
-  margin: 0.35rem 0 1rem;
+  margin: 0.25rem 0 1rem;
 }
 
 .hero-pitch {
@@ -306,6 +306,7 @@
 
 .project-card:hover {
   border-color: var(--accent);
+  background: var(--surface-2);
 }
 
 .project-name {
@@ -846,7 +847,7 @@ select {
   border-right: none;
   border-top: none;
   border-width: 2px;
-  font-size: 0.87rem;
+  font-size: 0.93rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   padding: 0.5rem 1.25rem;
@@ -937,14 +938,17 @@ select {
 }
 
 [data-screen='timeline'] .commit-head h2 {
-  font-size: clamp(1.2rem, 2.2vw, 1.85rem);
+  font-size: clamp(1.4rem, 2.2vw, 1.85rem);
   color: rgba(255 255 255 / 0.92);
   font-weight: 600;
   line-height: 1.2;
 }
 
 [data-screen='timeline'] .commit-meta {
-  display: none;
+  display: block;
+  opacity: 0.4;
+  font-size: 0.75rem;
+  margin: 0.1rem 0 0.25rem;
 }
 
 [data-screen='timeline'] .commit-meta code {
@@ -972,8 +976,13 @@ select {
 [data-screen='timeline'] .badge.pass,
 [data-screen='timeline'] .badge.tested {
   color: #62c07a;
+  background: rgba(98, 192, 122, 0.12);
+  border-color: #62c07a;
 }
 
 [data-screen='timeline'] .badge.fail {
   color: #ef6a5f;
+  background: rgba(239, 106, 95, 0.15);
+  border-color: #ef6a5f;
+  box-shadow: 0 0 8px rgba(239, 106, 95, 0.35);
 }

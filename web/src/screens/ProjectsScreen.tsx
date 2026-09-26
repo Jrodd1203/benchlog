@@ -66,9 +66,6 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: ProjectSummary) => void
       <div className="row">
         <FutureButton needs="a folder picker + POST /api/projects/open">Open existing folder…</FutureButton>
       </div>
-      <p className="note">
-        The project list is placeholder data until the backend can list projects (GET /api/projects).
-      </p>
     </main>
   )
 }

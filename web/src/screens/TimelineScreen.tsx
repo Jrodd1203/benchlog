@@ -19,11 +19,14 @@ export function TimelineScreen() {
   const [speed, setSpeed] = useState(SPEEDS[1].ms)
 
   useEffect(() => {
+    let alive = true
     getTimeline().then(({ data, source }) => {
+      if (!alive) return
       setEntries(data)
       setSource(source)
       setIndex(data.length - 1)
     })
+    return () => { alive = false }
   }, [])
 
   // Load the circuit at the selected commit and the one before it.
@@ -79,6 +82,35 @@ export function TimelineScreen() {
 
       <div className="board-frame">{boards && <Breadboard circuit={boards.circuit} previous={boards.previous} />}</div>
 
+      <section className={`commit-info${entry.electrical ? ' electrical' : ''}`}>
+        <div className="commit-head">
+          <h2>{entry.message}</h2>
+          <div className="commit-badges">
+            {entry.check && entry.check !== 'none' && (
+              <span className={`badge ${entry.check}`}>{entry.check === 'pass' ? 'Checks pass' : 'Checks fail'}</span>
+            )}
+            {entry.tested && <span className="badge tested">Tested on the bench</span>}
+          </div>
+        </div>
+        <p className="commit-meta">
+          <code>{entry.shortSha}</code>
+          {entry.author}, {new Date(entry.date).toLocaleString()}
+        </p>
+        {entry.note && <p className="commit-note">{entry.note}</p>}
+        <ul className="change-lines">
+          {entry.lines.length === 0 && <li className="muted">No circuit changes.</li>}
+          {entry.lines.map((line) => {
+            const electricalLine = /connected|different strip/.test(line)
+            return (
+              <li key={line} className={electricalLine ? 'electrical' : undefined}>
+                {electricalLine && '⚡ '}
+                {line}
+              </li>
+            )
+          })}
+        </ul>
+      </section>
+
       <div className="scrubber">
         <div className="scrub-controls">
           <button type="button" className="btn icon" onClick={() => go(index - 1)} disabled={index === 0} aria-label="Previous commit">
@@ -132,35 +164,6 @@ export function TimelineScreen() {
         )}
         <span className="muted scrub-hint">Arrow keys step, Space plays</span>
       </div>
-
-      <section className={`commit-info${entry.electrical ? ' electrical' : ''}`}>
-        <div className="commit-head">
-          <h2>{entry.message}</h2>
-          <div className="commit-badges">
-            {entry.check && entry.check !== 'none' && (
-              <span className={`badge ${entry.check}`}>{entry.check === 'pass' ? 'Checks pass' : 'Checks fail'}</span>
-            )}
-            {entry.tested && <span className="badge tested">Tested on the bench</span>}
-          </div>
-        </div>
-        <p className="commit-meta">
-          <code>{entry.shortSha}</code>
-          {entry.author}, {new Date(entry.date).toLocaleString()}
-        </p>
-        {entry.note && <p className="commit-note">{entry.note}</p>}
-        <ul className="change-lines">
-          {entry.lines.length === 0 && <li className="muted">No circuit changes.</li>}
-          {entry.lines.map((line) => {
-            const electricalLine = /connected|different strip/.test(line)
-            return (
-              <li key={line} className={electricalLine ? 'electrical' : undefined}>
-                {electricalLine && '⚡ '}
-                {line}
-              </li>
-            )
-          })}
-        </ul>
-      </section>
     </div>
   )
 }
