@@ -223,3 +223,6 @@ web/dist/
 
 # macOS
 .DS_Store
+
+# benchlog local state (baseline scans, etc.)
+.benchlog/
