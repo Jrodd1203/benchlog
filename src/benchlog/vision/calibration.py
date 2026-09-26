@@ -49,8 +49,12 @@ MIN_TRACKING_CORRELATION = 0.6  # ECC correlation below this means the lock is l
 GOOD_TRACKING_CORRELATION = 0.9  # good enough to stop trying other starting points
 MAX_TRACKED_MOVE_FRACTION = 0.25  # of the board's width; beyond this, recalibrate
 _ECC_SCALES = (0.125, 0.25, 0.5)  # coarse to fine; the coarsest blurs out the (periodic) hole grid
-_HOMOGRAPHY_SCALES = (0.25, 0.5)
-MAX_PERSPECTIVE_CORRECTION = 0.05  # of the board's width: how far refinement may move any corner
+PATCH_GRID = (8, 4)  # patches along and across the board for the perspective correction
+PATCH_HALF_PITCHES = 4  # patch half-size in hole pitches: big enough to include non-repeating features
+PATCH_ROUNDS = 3
+MIN_PATCHES = 8
+MIN_PATCH_RESPONSE = 0.05  # phase-correlation peak strength below this means the patch can't be trusted
+MAX_PATCH_RESIDUAL_PX = 1.5  # median leftover misalignment allowed after correction
 
 # Classification
 BLUR_SIGMA = 1.0
@@ -361,6 +365,70 @@ def _ecc(
     return matrix, float(correlation)
 
 
+def _patch_centres(cal: Calibration) -> np.ndarray:
+    """Points spread over the board (reference coords) where local alignment is measured."""
+    c = np.float64(cal.corners)
+    pts = []
+    for u in np.linspace(0.06, 0.94, PATCH_GRID[0]):
+        top, bottom = c[0] + (c[1] - c[0]) * u, c[3] + (c[2] - c[3]) * u
+        pts.extend(top + (bottom - top) * v for v in np.linspace(0.12, 0.88, PATCH_GRID[1]))
+    return np.float64(pts)
+
+
+def _patch_shifts(
+    cal: Calibration, ref_gray: np.ndarray, cur_gray: np.ndarray, matrix: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Leftover misalignment at each patch after aligning with `matrix`: (patch centres, shifts).
+
+    Patches span several holes, so they include things that don't repeat (printed numbers, board
+    edges, the centre channel, rail lines). That lets them see a slip of a whole hole, which the
+    repeating hole grid hides from whole-image alignment.
+    """
+    h, w = ref_gray.shape
+    size = round(PATCH_HALF_PITCHES * hole_pitch_px(cal.holes))
+    window = cv2.createHanningWindow((2 * size, 2 * size), cv2.CV_32F)
+    aligned = cv2.warpPerspective(cur_gray, matrix, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP)
+    centres, shifts = [], []
+    for x, y in _patch_centres(cal):
+        xi, yi = round(x), round(y)
+        if xi - size < 0 or yi - size < 0 or xi + size > w or yi + size > h:
+            continue
+        ref_patch = ref_gray[yi - size : yi + size, xi - size : xi + size]
+        cur_patch = aligned[yi - size : yi + size, xi - size : xi + size]
+        (dx, dy), response = cv2.phaseCorrelate(ref_patch, cur_patch, window)
+        if response >= MIN_PATCH_RESPONSE:
+            centres.append((x, y))
+            shifts.append((dx, dy))
+    return np.float64(centres).reshape(-1, 2), np.float64(shifts).reshape(-1, 2)
+
+
+def _patch_refine(
+    cal: Calibration, ref_gray: np.ndarray, cur_gray: np.ndarray, start: np.ndarray
+) -> tuple[np.ndarray, float] | None:
+    """Correct `start` (a rotation + shift) for perspective, from the patches' leftover shifts.
+
+    Returns the refined homography and the median leftover shift (px), or None if too few patches
+    could be measured.
+    """
+    pitch = hole_pitch_px(cal.holes)
+    matrix = np.float64(start)
+    for _ in range(PATCH_ROUNDS):
+        centres, shifts = _patch_shifts(cal, ref_gray, cur_gray, matrix)
+        keep = np.hypot(*shifts.T) < 1.5 * pitch if len(shifts) else np.zeros(0, bool)
+        if keep.sum() < MIN_PATCHES:
+            return None
+        # Where each patch centre actually is in the current frame.
+        seen = cv2.perspectiveTransform((centres[keep] + shifts[keep]).reshape(-1, 1, 2), matrix).reshape(-1, 2)
+        found, _ = cv2.findHomography(centres[keep], seen, cv2.RANSAC, 2.0)
+        if found is None:
+            return None
+        matrix = found
+    _, shifts = _patch_shifts(cal, ref_gray, cur_gray, matrix)
+    if len(shifts) < MIN_PATCHES:
+        return None
+    return matrix, float(np.median(np.hypot(*shifts.T)))
+
+
 def _outline_estimate(cal: Calibration, frame: np.ndarray) -> np.ndarray | None:
     """Rotation+shift from the calibrated corners to the board outline detected in `frame`."""
     detected = detect_board_downscaled(frame)
@@ -379,9 +447,10 @@ def track(cal: Calibration, frame: np.ndarray, start: np.ndarray | None = None) 
 
     First a rotation + shift, found robustly from coarse to fine. Tries, in order: `start` (e.g.
     the last tracked position), "hasn't moved", and only then the board outline detected in this
-    frame, which can wobble on faint board edges. Then a perspective refinement: when the board
-    moves under a camera that isn't perfectly overhead, its image also changes shape slightly,
-    which a rotation + shift alone leaves as several pixels of error at the board's ends.
+    frame, which can wobble on faint board edges. Then a perspective correction from local patch
+    alignment: when the board moves under a camera that isn't perfectly overhead, its image also
+    changes shape, and the repeating hole grid can let whole-image alignment slip by a hole in
+    places. Raises CalibrationError rather than returning an alignment that isn't precise.
     """
     if frame.shape[:2] != cal.reference.shape[:2]:
         raise CalibrationError(
@@ -420,16 +489,13 @@ def track(cal: Calibration, frame: np.ndarray, start: np.ndarray | None = None) 
     if best.shift_px > MAX_TRACKED_MOVE_FRACTION * board_w:
         raise CalibrationError("the board moved too far since calibration; run `benchlog camera calibrate`")
 
-    try:
-        matrix, correlation = _ecc(cal, ref_gray, cur_gray, best.matrix, cv2.MOTION_HOMOGRAPHY, _HOMOGRAPHY_SCALES)
-    except cv2.error:
-        return best
-    refined = Tracking(matrix=matrix, correlation=correlation)
-    # Keep the refinement only if it's a small correction, not a runaway fit.
-    drift = np.abs(refined.apply_array(cal.corners) - best.apply_array(cal.corners)).max()
-    if correlation >= best.correlation and drift < MAX_PERSPECTIVE_CORRECTION * board_w:
-        return refined
-    return best
+    refined = _patch_refine(cal, ref_gray, cur_gray, best.matrix)
+    if refined is None or refined[1] > MAX_PATCH_RESIDUAL_PX:
+        raise CalibrationError(
+            "can't line the board up with the calibration precisely (something covering it, or the camera "
+            "moved?); scan again, or run `benchlog camera calibrate`"
+        )
+    return Tracking(matrix=refined[0], correlation=best.correlation)
 
 
 # ── Classification ────────────────────────────────────────────────────────────
