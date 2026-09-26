@@ -1,5 +1,6 @@
 """Local FastAPI service used by the web UI. Endpoints are agreed at kickoff."""
 
+import math
 from pathlib import Path
 
 import cv2
@@ -30,7 +31,7 @@ async def scan(file: UploadFile = File(...)):
         "present": result.present,
         "empty": result.empty,
         "occupied": result.occupied,
-        "residual_px": result.residual_px,
+        "residual_px": None if math.isinf(result.residual_px) else result.residual_px,
         "upside_down": result.upside_down,
         "warnings": result.warnings,
     }
