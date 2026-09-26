@@ -51,14 +51,20 @@ export function DiffScreen() {
     }
   }, [oldRev, newRev, live])
 
-  const options = (
+  const revisionOptions = [...(entries ?? [])].reverse().map((e) => (
+    <option key={e.sha} value={e.sha}>
+      {e.shortSha} {e.message}
+    </option>
+  ))
+
+  // "From" can't be the working circuit: getDiff() has no way to ask for a diff *starting*
+  // at the uncommitted working tree (omitting `old` means HEAD, not working), so that option
+  // is only offered for "To".
+  const oldOptions = <>{revisionOptions}</>
+  const newOptions = (
     <>
       {live && <option value={WORKING}>Working circuit (uncommitted)</option>}
-      {[...(entries ?? [])].reverse().map((e) => (
-        <option key={e.sha} value={e.sha}>
-          {e.shortSha} {e.message}
-        </option>
-      ))}
+      {revisionOptions}
     </>
   )
 
@@ -75,13 +81,13 @@ export function DiffScreen() {
         <label className="field">
           <span>From</span>
           <select value={oldRev} onChange={(e) => setOldRev(e.target.value)}>
-            {options}
+            {oldOptions}
           </select>
         </label>
         <label className="field">
           <span>To</span>
           <select value={newRev} onChange={(e) => setNewRev(e.target.value)}>
-            {options}
+            {newOptions}
           </select>
         </label>
         {!live && (
