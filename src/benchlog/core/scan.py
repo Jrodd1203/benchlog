@@ -19,14 +19,16 @@ from benchlog.core.netlist import natural_key
 from benchlog.core.pairing import HoleChange, observations_from_occupancy, occupied_holes
 
 
-# Nobody rewires this much between two scans; more than this means the camera misread the board.
-MAX_PLAUSIBLE_CHANGES = 30
+# Nobody rewires this much between two scans; more changed holes than this means the camera misread
+# the board. (Holes, not observations: a flat wire covers several holes, and a misread board can
+# form long runs that pair into only a few observations.)
+MAX_PLAUSIBLE_HOLE_CHANGES = 60
 
 
 class MisreadError(ValueError):
     def __init__(self, count: int) -> None:
         super().__init__(
-            f"{count} changes seen at once, which looks like a misread board. Check the lighting and "
+            f"{count} holes changed at once, which looks like a misread board. Check the lighting and "
             "alignment and scan again, or scan with sync if the board really matches the circuit"
         )
         self.count = count
@@ -105,14 +107,15 @@ def scan(circuit: Circuit, store: ScanStore, reading: BoardReading, pending: lis
 
     If the previous scan's observations have all been reviewed, that scan becomes the new
     reference first. Otherwise this scan replaces the unreviewed one, measured from the same
-    reference, so nothing seen before is lost. Raises MisreadError (saving nothing) when the
-    reading implies an implausible number of changes.
+    reference, so nothing seen before is lost. Raises MisreadError (saving nothing) when an
+    implausible number of holes changed.
     """
     if not pending:
         store.promote_latest()
     reference = store.reference(circuit)
-    observations = observations_from_occupancy(circuit, changes_between(reference, reading))
-    if len(observations) > MAX_PLAUSIBLE_CHANGES:
-        raise MisreadError(len(observations))  # before saving, so a misread never becomes the reference
+    changes = changes_between(reference, reading)
+    if len(changes) > MAX_PLAUSIBLE_HOLE_CHANGES:
+        raise MisreadError(len(changes))  # before saving, so a misread never becomes the reference
+    observations = observations_from_occupancy(circuit, changes)
     store.save_latest(reading)
     return observations

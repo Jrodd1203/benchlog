@@ -71,8 +71,46 @@ def reading_from_frame(frame, source: str, calibration=None) -> BoardReading:
     )
 
 
-def read_board(camera: int, image: Path | None, calibration_dir: Path | None = None, timeout: float = 10.0) -> BoardReading:
-    """Read the board from a photo, or from the camera once the board is in view and still."""
+def write_debug(frame, calibration, debug_dir: Path) -> list[str]:
+    """Save the frame and a per-hole change map to `debug_dir`; returns lines describing the scan."""
+    import cv2
+
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(debug_dir / "frame.png"), frame)
+    if calibration is None:
+        return [f"saved the frame to {debug_dir} (no calibration, so no change map)"]
+    from benchlog.vision.calibration import CalibrationError, classify, debug_image, track
+
+    try:
+        tracking = track(calibration, frame)
+    except CalibrationError as e:
+        return [f"tracking failed: {e}", f"saved the frame to {debug_dir}"]
+    occupancy = classify(calibration, frame, tracking)
+    cv2.imwrite(str(debug_dir / "changes.png"), debug_image(calibration, frame, occupancy))
+    ranked = sorted(occupancy.diffs, key=occupancy.diffs.get, reverse=True)
+    values = sorted(occupancy.diffs.values())
+    return [
+        f"tracking: match {tracking.correlation:.3f}, moved {tracking.shift_px:.1f} px, rotated {tracking.rotation_deg:.2f}°",
+        f"change threshold {occupancy.threshold:.1f} (typical hole {values[len(values) // 2]:.1f})",
+        "most changed: " + ", ".join(f"{n} {occupancy.diffs[n]:.1f}" for n in ranked[:10]),
+        f"changed since calibration: {sorted(occupancy.changed) or 'none'}",
+        f"saved frame.png and changes.png to {debug_dir}",
+    ]
+
+
+def read_board(
+    camera: int,
+    image: Path | None,
+    calibration_dir: Path | None = None,
+    timeout: float = 10.0,
+    debug_dir: Path | None = None,
+    debug_lines: list[str] | None = None,
+) -> BoardReading:
+    """Read the board from a photo, or from the camera once the board is in view and still.
+
+    With `debug_dir`, also saves the frame and a change map there and appends a description of the
+    scan to `debug_lines`.
+    """
     try:
         import cv2
 
@@ -85,15 +123,21 @@ def read_board(camera: int, image: Path | None, calibration_dir: Path | None = N
         frame = cv2.imread(str(image))
         if frame is None:
             raise ProjectError(f"can't read image {image}")
-        return reading_from_frame(frame, f"image {image.name}", calibration)
-
-    try:
-        cap = open_camera(camera)
+        source = f"image {image.name}"
+    else:
         try:
-            corners = calibration.corners if calibration is not None else None
-            frame = grab_steady_frame(cap, timeout=timeout, board_corners=corners)
-        finally:
-            cap.release()
-    except CameraError as e:
-        raise ProjectError(str(e)) from e
-    return reading_from_frame(frame, f"camera {camera}", calibration)
+            cap = open_camera(camera)
+            try:
+                corners = calibration.corners if calibration is not None else None
+                frame = grab_steady_frame(cap, timeout=timeout, board_corners=corners)
+            finally:
+                cap.release()
+        except CameraError as e:
+            raise ProjectError(str(e)) from e
+        source = f"camera {camera}"
+    if debug_dir is not None:
+        lines = write_debug(frame, calibration, debug_dir)
+        if debug_lines is not None:
+            debug_lines.extend(lines)
+    return reading_from_frame(frame, source, calibration)
+

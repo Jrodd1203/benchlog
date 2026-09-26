@@ -279,3 +279,22 @@ def test_calibrated_scan_is_not_blocked_by_a_wobbly_detector(cal: cal_mod.Calibr
     clock = iter(np.arange(0, 100, 1 / 30))
     with pytest.raises(camera.CameraError, match="hold still"):
         camera.grab_steady_frame(StillCamera(), timeout=5, clock=lambda: next(clock))
+
+
+def test_scan_debug_explains_what_the_camera_saw(cal: cal_mod.Calibration, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "project"
+    repo = Repo.init(path)
+    repo.run("config", "user.name", "Test")
+    repo.run("config", "user.email", "test@example.com")
+    monkeypatch.chdir(path)
+    project, _ = Project.init(path)
+    cal.save(project.calibration_dir)
+    photo = tmp_path / "wire.png"
+    cv2.imwrite(str(photo), plug(DESK, cal.holes, {"A40": (0, 200, 0), "A45": (0, 200, 0)}))
+
+    result = CliRunner(env={"COLUMNS": "300"}).invoke(app, ["scan", "--image", str(photo), "--debug"])
+    assert result.exit_code == 0, result.output
+    assert "most changed: A40" in result.output or "most changed: A45" in result.output
+    assert "so filled: ['A40', 'A45']" in result.output
+    assert (project.scans.dir / "debug" / "changes.png").exists()
+    assert (project.scans.dir / "debug" / "frame.png").exists()

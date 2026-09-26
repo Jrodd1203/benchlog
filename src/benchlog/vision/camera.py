@@ -191,7 +191,7 @@ def preview(cap: cv2.VideoCapture, calibration=None, window: str = "benchlog cam
                         tracking = track(calibration, frame, start=matrix)
                         matrix = tracking.matrix
                         holes = tracking.apply(calibration.holes)
-                        outline = cv2.transform(calibration.corners.reshape(-1, 1, 2), matrix).reshape(-1, 2)
+                        outline = tracking.apply_array(calibration.corners)
                         lock_status = f"locked (match {tracking.correlation:.2f}, moved {tracking.shift_px:.0f} px)"
                     except CalibrationError as e:
                         holes, outline, matrix, lock_status = None, None, None, f"lock lost: {e}"

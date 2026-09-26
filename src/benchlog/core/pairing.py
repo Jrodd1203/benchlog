@@ -74,6 +74,44 @@ def _shift(hole: Hole, rows: int, cols: int, template: BreadboardTemplate) -> Ho
     return shifted if template.is_valid(shifted) else None
 
 
+MIN_FLAT_WIRE_HOLES = 3
+
+
+def _line_key(hole: Hole) -> list[tuple[str, int]]:
+    """The straight lines a hole lies on, each as (line id, position along it)."""
+    if hole[:2] in ("L+", "L-", "R+", "R-"):
+        return [(hole[:2], int(hole[2:]))]
+    col, row = hole[0], int(hole[1:])
+    half = "L" if col in LEFT_COLUMNS else "R"
+    # Along a column letter (rows change), or across a row within one half (letters change).
+    return [(f"col {col}", row), (f"row {row}{half}", COLUMNS.index(col))]
+
+
+def _straight_runs(holes: list[Hole]) -> list[list[Hole]]:
+    """Longest runs of 3+ consecutive holes along one line, each hole used at most once."""
+    lines: dict[str, dict[int, Hole]] = {}
+    for hole in holes:
+        for line, pos in _line_key(hole):
+            lines.setdefault(line, {})[pos] = hole
+    runs = []
+    for line, by_pos in lines.items():
+        positions = sorted(by_pos)
+        start = 0
+        for i in range(1, len(positions) + 1):
+            if i == len(positions) or positions[i] != positions[i - 1] + 1:
+                if i - start >= MIN_FLAT_WIRE_HOLES:
+                    runs.append([by_pos[p] for p in positions[start:i]])
+                start = i
+    runs.sort(key=len, reverse=True)
+    used: set[Hole] = set()
+    result = []
+    for run in runs:
+        if not used.intersection(run):
+            result.append(run)
+            used.update(run)
+    return result
+
+
 class _Pairer:
     def __init__(self, circuit: Circuit, changes: list[HoleChange]) -> None:
         self.circuit = circuit
@@ -179,8 +217,22 @@ class _Pairer:
                 return
         self._add(ObservationKind.REMOVED, "component", component.id, confidence, before=before)
 
+    def _flat_wires(self) -> None:
+        """A straight run of 3+ neighbouring filled holes is one wire lying flat across them.
+
+        Pre-cut jumpers lie on the board, so from above they cover every hole between their ends.
+        The run's two ends are taken as the wire's ends, marked for the user to check.
+        """
+        for run in _straight_runs(list(self.free)):
+            a, b = run[0], run[-1]
+            conf = min(self.free[h].confidence for h in run) * AMBIGUOUS
+            for hole in run:
+                del self.free[hole]
+            self._add(ObservationKind.ADDED, "wire", next(self._wire_ids), conf, after={"a": a, "b": b}, uncertain_holes=[a, b])
+
     def _new_wires(self) -> None:
         """Pair leftover filled holes into new wires, by color when the camera saw one."""
+        self._flat_wires()
         by_color: dict[str | None, list[Hole]] = {}
         for hole in sorted(self.free, key=natural_key):
             color = self.free[hole].color
