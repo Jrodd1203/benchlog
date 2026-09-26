@@ -8,7 +8,13 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: ProjectSummary) => void
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
 
   useEffect(() => {
-    listProjects().then(setProjects)
+    let alive = true
+    listProjects().then((p) => {
+      if (alive) setProjects(p)
+    })
+    return () => {
+      alive = false
+    }
   }, [])
 
   return (

@@ -10,7 +10,13 @@ export function WorkspaceScreen() {
   const [circuit, setCircuit] = useState<Loaded<Circuit> | null>(null)
 
   useEffect(() => {
-    getCircuit().then(setCircuit)
+    let alive = true
+    getCircuit().then((c) => {
+      if (alive) setCircuit(c)
+    })
+    return () => {
+      alive = false
+    }
   }, [])
 
   return (
