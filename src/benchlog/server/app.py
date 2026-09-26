@@ -6,6 +6,7 @@ the BENCHLOG_PROJECT environment variable.
 """
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -18,10 +19,23 @@ from benchlog.core.diff import CircuitDiff, describe, diff
 from benchlog.core.models import Circuit, Hole, Observation
 from benchlog.core.netlist import Netlist, netlist
 from benchlog.core.project import Project, ProjectError
+from benchlog.core.reconcile import Reconciliation, reconcile
 from benchlog.core.repo import Commit, GitError
 from benchlog.core.scan import reading_from_circuit
+from benchlog.serial.service import SerialSnapshot
+from benchlog.server.serial_routes import router as serial_router
+from benchlog.server.serial_routes import serial_service
 
-app = FastAPI(title="benchlog")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    serial_service(app)  # one serial agent connection for the app's lifetime
+    yield
+    app.state.serial.close()
+
+
+app = FastAPI(title="benchlog", lifespan=lifespan)
+app.include_router(serial_router)
 
 
 @app.exception_handler(ProjectError)
@@ -78,6 +92,8 @@ class ScanResponse(BaseModel):
     source: str
     warnings: list[str]
     observations: list[Observation]
+    serial: SerialSnapshot | None = Field(default=None, description="What the serial agent sensed; null without one.")
+    reconciliation: Reconciliation = Field(description="Serial verdict for each observation, plus serial warnings.")
 
 
 class IdsRequest(BaseModel):
@@ -177,15 +193,22 @@ def history(project: ProjectDep, limit: int | None = None) -> list[HistoryEntry]
 
 
 @app.post("/api/scan")
-def scan(request: ScanRequest, project: ProjectDep) -> ScanResponse:
+def scan(request: ScanRequest, project: ProjectDep, http: Request) -> ScanResponse:
     if request.simulate is not None:
         reading = reading_from_circuit(request.simulate, "simulated")
     else:
         reading = read_board(
             project.camera_index(request.camera), Path(request.image) if request.image else None, project.calibration_dir
         )
+    serial = serial_service(http.app).snapshot()  # None when no agent is connected
     observations = project.scan(reading, sync=request.sync)
-    return ScanResponse(source=reading.source, warnings=reading.warnings, observations=observations)
+    check = reconcile(
+        project.load_circuit(), observations,
+        serial.probe.pins if serial else None, serial.i2c.devices if serial else None,
+    )  # fmt: skip
+    return ScanResponse(
+        source=reading.source, warnings=reading.warnings, observations=observations, serial=serial, reconciliation=check
+    )
 
 
 @app.get("/api/observations")
