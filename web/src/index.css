@@ -1,38 +1,58 @@
-:root {
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --surface-2: #eef0f3;
-  --border: #d9dde3;
-  --text: #1c2128;
-  --muted: #5f6b7a;
-  --accent: #1a7f5a;
-  --accent-text: #ffffff;
-  --warn: #b26b00;
-  --ok: #1a9c5b;
-  --bad: #c93c3c;
-  --radius: 8px;
+/* benchlog: an engineering computation pad.
+   Pale green gridded paper, graphite text, drafting-blue pencil for actions. The only other hues are
+   the board's own: wire colours, and the diff colours (added green, removed red, moved amber). */
 
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+:root {
+  --paper: #eaf0e2;
+  --paper-grid: rgb(120 160 100 / 0.16);
+  --paper-grid-major: rgb(120 160 100 / 0.3);
+  --surface: #f6f9f1;
+  --surface-2: #e0e9d5;
+  --border: #c5d4b5;
+  --rule: #a3ba8f;
+  --text: #1c2119;
+  --muted: #5b6754;
+  --accent: #2c5d9e; /* drafting-blue pencil */
+  --accent-ink: #ffffff;
+  --accent-soft: rgb(44 93 158 / 0.12);
+  --ok: #2d7a3e;
+  --bad: #b3261e;
+  --warn: #9a6408;
+  --shadow: 0 1px 2px rgb(40 60 30 / 0.12);
+  --radius: 4px;
+
+  --font-display: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+  --font-text: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+
+  font-family: var(--font-text);
   font-size: 15px;
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--text);
-  background: var(--bg);
-  color-scheme: light dark;
+  background: var(--paper);
+  color-scheme: light;
 }
 
+/* Dark: the same pad under a lamp, deep green-grey with the same pencil blue. */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #14171c;
-    --surface: #1c2027;
-    --surface-2: #252a33;
-    --border: #343a45;
-    --text: #e6e9ee;
-    --muted: #97a1ae;
-    --accent: #3fbf8a;
-    --accent-text: #0c1a13;
-    --warn: #e0a040;
-    --ok: #45c985;
-    --bad: #ef6b6b;
+    --paper: #151d19;
+    --paper-grid: rgb(150 200 160 / 0.045);
+    --paper-grid-major: rgb(150 200 160 / 0.085);
+    --surface: #1c2621;
+    --surface-2: #24312b;
+    --border: #33443b;
+    --rule: #48604f;
+    --text: #e2eadf;
+    --muted: #98a99b;
+    --accent: #86ade6;
+    --accent-ink: #0f1713;
+    --accent-soft: rgb(134 173 230 / 0.16);
+    --ok: #62c07a;
+    --bad: #ef6a5f;
+    --warn: #e0a345;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+    color-scheme: dark;
   }
 }
 
@@ -42,24 +62,54 @@
 
 body {
   margin: 0;
-  background: var(--bg);
+  min-height: 100vh;
+  background-color: var(--paper);
+  /* 5 mm grid with a heavier line every 25 mm, as on a computation pad */
+  background-image:
+    linear-gradient(var(--paper-grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--paper-grid-major) 1px, transparent 1px),
+    linear-gradient(var(--paper-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--paper-grid) 1px, transparent 1px);
+  background-size:
+    100px 100px,
+    100px 100px,
+    20px 20px,
+    20px 20px;
 }
 
+/* Type scale (1.25 ratio): 15 / 18.75 / 23.4 / 29.3 / 36.6 / 45.8 */
 h1,
 h2 {
   margin: 0;
-  line-height: 1.2;
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.1;
 }
 
 h1 {
-  font-size: 1.5rem;
+  font-size: 2.44rem;
 }
 
 h2 {
-  font-size: 1.05rem;
+  font-size: 1.25rem;
   margin-bottom: 0.75rem;
 }
 
 p {
   margin: 0 0 0.75rem;
+}
+
+code,
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--accent-soft);
 }

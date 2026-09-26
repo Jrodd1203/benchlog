@@ -7,7 +7,7 @@ export function StubScreen({ section }: { section: StubSection }) {
     <main className="page narrow">
       <header className="page-head">
         <div>
-          <p className="eyebrow">Requirement {section.requirement} · skeleton</p>
+          <p className="eyebrow">Requirement {section.requirement}, not built yet</p>
           <h1>{section.title}</h1>
         </div>
       </header>

@@ -90,10 +90,11 @@ export function Breadboard({
     >
       {/* body, rails, centre channel */}
       <rect className="bb-body" x={0} y={0} width={BOARD_W} height={BOARD_H} rx={1.5} />
+      {/* printed rail lines, as on the real BB830: red above the + row, black below the - row */}
       {(['L', 'R'] as const).map((side) => (
         <g key={side}>
-          <rect className="bb-rail plus" x={2} y={railY(`${side}+`) - 1.1} width={BOARD_W - 4} height={2.2} rx={0.6} />
-          <rect className="bb-rail minus" x={2} y={railY(`${side}-`) - 1.1} width={BOARD_W - 4} height={2.2} rx={0.6} />
+          <line className="bb-rail-line plus" x1={4} x2={BOARD_W - 4} y1={railY(`${side}+`) - 1.55} y2={railY(`${side}+`) - 1.55} />
+          <line className="bb-rail-line minus" x1={4} x2={BOARD_W - 4} y1={railY(`${side}-`) + 1.55} y2={railY(`${side}-`) + 1.55} />
         </g>
       ))}
       <rect className="bb-channel" x={2} y={channelY - 1.4} width={BOARD_W - 4} height={2.8} rx={0.6} />

@@ -130,7 +130,7 @@ export function TimelineScreen() {
             example data
           </span>
         )}
-        <span className="muted small scrub-hint">← → to step · Space to play</span>
+        <span className="muted scrub-hint">Arrow keys step, Space plays</span>
       </div>
 
       <section className={`commit-info${entry.electrical ? ' electrical' : ''}`}>
@@ -138,13 +138,14 @@ export function TimelineScreen() {
           <h2>{entry.message}</h2>
           <div className="commit-badges">
             {entry.check && entry.check !== 'none' && (
-              <span className={`badge ${entry.check}`}>{entry.check === 'pass' ? 'checks pass' : 'checks fail'}</span>
+              <span className={`badge ${entry.check}`}>{entry.check === 'pass' ? 'Checks pass' : 'Checks fail'}</span>
             )}
-            {entry.tested && <span className="badge tested">tested</span>}
+            {entry.tested && <span className="badge tested">Tested on the bench</span>}
           </div>
         </div>
         <p className="commit-meta">
-          <code>{entry.shortSha}</code> · {entry.author} · {new Date(entry.date).toLocaleString()}
+          <code>{entry.shortSha}</code>
+          {entry.author}, {new Date(entry.date).toLocaleString()}
         </p>
         {entry.note && <p className="commit-note">{entry.note}</p>}
         <ul className="change-lines">

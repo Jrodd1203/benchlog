@@ -1,44 +1,42 @@
+/* A realistic white BB830 in both light and dark themes, so it looks like the board on the bench. */
 .breadboard {
-  --bb-body: #eceae4;
-  --bb-hole: #3b3f46;
-  --bb-label: #6b7280;
-  --bb-channel: #d8d5cc;
-  --bb-part-text: #1f2937;
+  --bb-body: #f6f5f0;
+  --bb-body-edge: #dcd9cf;
+  --bb-hole: #2e2f33;
+  --bb-print: #4b4f57;
+  --bb-channel: #e6e3da;
+  --bb-part-text: #1f2329;
 
   display: block;
   width: 100%;
   height: auto;
-  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  .breadboard {
-    --bb-body: #2a2e35;
-    --bb-hole: #0f1115;
-    --bb-label: #8b93a0;
-    --bb-channel: #1f2329;
-    --bb-part-text: #e5e7eb;
-  }
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
 }
 
 .bb-body {
   fill: var(--bb-body);
+  stroke: var(--bb-body-edge);
+  stroke-width: 0.35;
 }
 
 .bb-channel {
   fill: var(--bb-channel);
 }
 
-.bb-rail.plus {
-  fill: rgb(220 38 38 / 0.1);
+.bb-rail-line {
+  stroke-width: 0.3;
 }
 
-.bb-rail.minus {
-  fill: rgb(59 130 246 / 0.1);
+.bb-rail-line.plus {
+  stroke: #d42a2a;
+}
+
+.bb-rail-line.minus {
+  stroke: #1d1f24;
 }
 
 .bb-label {
-  fill: var(--bb-label);
+  fill: var(--bb-print);
   font-size: 1.5px;
   text-anchor: middle;
 }
@@ -49,11 +47,11 @@
 }
 
 .bb-label.rail.plus {
-  fill: #dc2626;
+  fill: #d42a2a;
 }
 
 .bb-label.rail.minus {
-  fill: #2563eb;
+  fill: #1d1f24;
 }
 
 .bb-hole {
@@ -66,15 +64,19 @@
 }
 
 .bb-part.esp32 rect {
-  fill: rgb(30 58 138 / 0.18);
-  stroke: #3b82f6;
+  fill: rgb(28 45 90 / 0.12);
+  stroke: #2f5fb3;
   stroke-width: 0.25;
+}
+
+.bb-part.esp32 text {
+  font-weight: 600;
 }
 
 .bb-part line {
   stroke-width: 0.9;
   stroke-linecap: round;
-  opacity: 0.8;
+  opacity: 0.85;
 }
 
 .bb-part text {
@@ -83,7 +85,7 @@
   text-anchor: middle;
 }
 
-/* A thin light edge under every wire keeps black wires visible on any background. */
+/* A thin light edge under every wire keeps black wires readable where they cross holes. */
 .bb-wire-edge,
 .bb-wire {
   fill: none;
@@ -91,8 +93,8 @@
 }
 
 .bb-wire-edge {
-  stroke: rgb(255 255 255 / 0.55);
-  stroke-width: 0.95;
+  stroke: rgb(255 255 255 / 0.9);
+  stroke-width: 1;
 }
 
 .bb-wire {
@@ -100,11 +102,11 @@
 }
 
 .bb-wire-label rect {
-  fill: rgb(15 17 21 / 0.85);
+  fill: rgb(31 28 22 / 0.88);
 }
 
 .bb-wire-label text {
-  fill: #f8fafc;
+  fill: #fbf8f0;
   font-size: 1.5px;
   text-anchor: middle;
 }
@@ -115,19 +117,19 @@
 }
 
 .bb-ring.added {
-  stroke: #22c55e;
-  fill: rgb(34 197 94 / 0.15);
+  stroke: #2d7a3e;
+  fill: rgb(45 122 62 / 0.18);
   animation: bb-pulse 1.4s ease-in-out infinite;
 }
 
 .bb-ring.removed {
-  stroke: #ef4444;
+  stroke: #b3261e;
   animation: bb-pulse 1.4s ease-in-out infinite;
 }
 
 .bb-ghost {
-  fill: rgb(239 68 68 / 0.25);
-  stroke: #ef4444;
+  fill: rgb(179 38 30 / 0.22);
+  stroke: #b3261e;
   stroke-width: 0.15;
 }
 
