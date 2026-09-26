@@ -547,6 +547,39 @@ select {
   overflow-wrap: anywhere;
 }
 
+/* Component icons in the workspace sidebar */
+.component-icon-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+}
+
+.component-icon-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: default;
+}
+
+.component-icon-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+/* Component icon inline in review change-top row */
+.change-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 /* ESP32 indicator: a panel-mount LED. */
 .status-light {
   display: inline-flex;
