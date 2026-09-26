@@ -18,8 +18,8 @@ from benchlog.camera import read_board
 from benchlog.core.diff import CircuitDiff, describe, diff
 from benchlog.core.models import Circuit, Hole, Observation
 from benchlog.core.netlist import Netlist, netlist
-from benchlog.core.project import Project, ProjectError
-from benchlog.core.reconcile import Reconciliation, reconcile
+from benchlog.core.project import HardwareCheck, Project, ProjectError
+from benchlog.core.reconcile import Reconciliation
 from benchlog.core.repo import Commit, GitError
 from benchlog.core.scan import reading_from_circuit
 from benchlog.serial.service import SerialSnapshot
@@ -113,10 +113,12 @@ class EditRequest(BaseModel):
 class CommitRequest(BaseModel):
     message: str = Field(min_length=1)
     firmware: list[str] = Field(default=[], description="Firmware paths relative to the project root.")
+    force: bool = Field(default=False, description="Commit even if the ESP32 check fails.")
 
 
 class CommitResponse(BaseModel):
     commit: Commit
+    hardware: HardwareCheck | None = Field(default=None, description="The ESP32 check that gated this commit.")
     changes: DiffResponse
 
 
@@ -202,13 +204,18 @@ def scan(request: ScanRequest, project: ProjectDep, http: Request) -> ScanRespon
         )
     serial = serial_service(http.app).snapshot()  # None when no agent is connected
     observations = project.scan(reading, sync=request.sync)
-    check = reconcile(
-        project.load_circuit(), observations,
-        serial.probe.pins if serial else None, serial.i2c.devices if serial else None,
-    )  # fmt: skip
+    check = project.check_with_serial(
+        observations, serial.probe.pins if serial else None, serial.i2c.devices if serial else None
+    )
     return ScanResponse(
         source=reading.source, warnings=reading.warnings, observations=observations, serial=serial, reconciliation=check
     )
+
+
+@app.get("/api/reconciliation")
+def get_reconciliation(project: ProjectDep) -> Reconciliation | None:
+    """The ESP32's verdicts on the last scan's observations (null before any scan)."""
+    return project.reconciliation()
 
 
 @app.get("/api/observations")
@@ -237,7 +244,18 @@ def edit(obs_id: str, request: EditRequest, project: ProjectDep) -> Observation:
 
 
 @app.post("/api/commit")
-def commit(request: CommitRequest, project: ProjectDep) -> CommitResponse:
+def commit(request: CommitRequest, project: ProjectDep, http: Request) -> CommitResponse:
+    """Check the circuit against the board through the ESP32 first; a failure blocks unless `force`."""
+    serial = serial_service(http.app).snapshot()  # None when no agent is connected
+    check = project.hardware_check(
+        serial.probe.pins if serial else None,
+        serial.i2c.devices if serial else None,
+        reason=None if serial else "serial agent not connected",
+    )
+    if check.status == "failed" and not request.force:
+        raise ProjectError("ESP32 check failed, so nothing was committed: " + " ".join(check.problems))
     before = project.baseline()
-    c = project.commit(request.message, firmware=[project.repo.root / p for p in request.firmware])
-    return CommitResponse(commit=c, changes=_diff_response(before, project.load_circuit()))
+    c = project.commit(
+        request.message, firmware=[project.repo.root / p for p in request.firmware], trailer=check.trailer(request.force)
+    )
+    return CommitResponse(commit=c, changes=_diff_response(before, project.load_circuit()), hardware=check)
