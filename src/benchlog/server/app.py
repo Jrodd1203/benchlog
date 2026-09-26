@@ -20,7 +20,7 @@ from benchlog.core.models import Circuit, Hole, Observation
 from benchlog.core.netlist import Netlist, netlist
 from benchlog.core.project import Project, ProjectError
 from benchlog.core.prs import PRNotFound
-from benchlog.core.reconcile import Reconciliation, reconcile
+from benchlog.core.reconcile import Reconciliation, SerialReadings, reconcile
 from benchlog.core.repo import Commit, GitError
 from benchlog.core.scan import reading_from_circuit
 from benchlog.serial.service import SerialSnapshot
@@ -210,7 +210,13 @@ def scan(request: ScanRequest, project: ProjectDep, http: Request) -> ScanRespon
             project.camera_index(request.camera), Path(request.image) if request.image else None, project.calibration_dir
         )
     serial = serial_service(http.app).snapshot()  # None when no agent is connected
-    observations = project.scan(reading, sync=request.sync)
+    readings = None
+    if serial is not None:
+        readings = SerialReadings(
+            probed_at=serial.probe.taken_at, port=serial.port, agent=serial.agent,
+            pins=serial.probe.pins, i2c=serial.i2c.devices,
+        )  # fmt: skip
+    observations = project.scan(reading, sync=request.sync, serial=readings)
     check = reconcile(
         project.load_circuit(), observations,
         serial.probe.pins if serial else None, serial.i2c.devices if serial else None,

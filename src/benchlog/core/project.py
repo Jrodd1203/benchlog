@@ -5,7 +5,11 @@
     .benchlog/calibration/       gitignored: hole map + empty-board reference image for this camera
     .benchlog/config.json        gitignored: this workstation's settings, e.g. {"camera": 1}
     .benchlog/baseline/          gitignored: empty-board capture from `benchlog.vision.capture`
-    .benchlog/scans/             gitignored: reference and latest board readings
+    .benchlog/scans/             gitignored: reference and latest board readings, and the serial
+                                 readings taken with the latest scan (serial.json)
+    .benchlog/board_state.json   gitignored: the last commit the physical board matched
+    .benchlog/prs/               gitignored: pull request pointers (see core/prs.py)
+    .benchlog/checks/            gitignored: check reports, one per commit
 """
 
 import json
@@ -17,6 +21,7 @@ from benchlog.core.board import TEMPLATES
 from benchlog.core.board_state import BoardStateStore, fingerprint
 from benchlog.core.models import Circuit, Hole, Observation, ObservationKind, ObservationStatus
 from benchlog.core.pairing import apply_observations
+from benchlog.core.reconcile import SerialReadings, serial_record
 from benchlog.core.repo import Commit, GitError, Repo
 from benchlog.core.scan import BoardReading, MisreadError, ScanStore
 from benchlog.core.scan import scan as run_scan
@@ -44,6 +49,7 @@ class Project:
         self.calibration_dir = repo.root / CALIBRATION_DIR
         self.state_dir = repo.root / STATE_DIR
         self.board_state = BoardStateStore(self.state_dir)
+        self.serial_readings_path = self.scans.dir / "serial.json"
 
     @classmethod
     def find(cls, start: Path | None = None) -> "Project":
@@ -142,12 +148,14 @@ class Project:
     def pending_observations(self) -> list[Observation]:
         return [o for o in self.observations() if o.status == ObservationStatus.PENDING]
 
-    def scan(self, reading: BoardReading, sync: bool = False) -> list[Observation]:
+    def scan(self, reading: BoardReading, sync: bool = False, serial: SerialReadings | None = None) -> list[Observation]:
         """Record a board reading and save the changes it implies as pending observations.
 
         With `sync`, the reading becomes the reference (the board matches the circuit) and
-        nothing is proposed.
+        nothing is proposed. `serial` is what the ESP32 agent read during the scan; it is kept
+        until the proposals are accepted, then saved into the circuit.
         """
+        self._keep_serial_readings(serial)
         if sync:
             self.scans.save_latest(reading)
             self.scans.promote_latest()
@@ -182,13 +190,32 @@ class Project:
         self.save_observations([updated.get(o.id, o) for o in observations])
         return list(updated.values())
 
+    def _keep_serial_readings(self, readings: SerialReadings | None) -> None:
+        if readings is None:
+            self.serial_readings_path.unlink(missing_ok=True)  # never pair old readings with a new scan
+            return
+        self.serial_readings_path.parent.mkdir(parents=True, exist_ok=True)
+        self.serial_readings_path.write_text(readings.model_dump_json(indent=2) + "\n")
+
+    def serial_readings(self) -> SerialReadings | None:
+        """The serial readings taken with the latest scan, if any."""
+        path = self.serial_readings_path
+        return SerialReadings.model_validate_json(path.read_text()) if path.exists() else None
+
     def accept_observations(self, ids: list[str] | None = None) -> list[Observation]:
-        """Apply pending observations to the circuit. All or nothing: if one can't be applied, none are."""
+        """Apply pending observations to the circuit. All or nothing: if one can't be applied, none are.
+
+        If the scan had serial readings, their verdicts for the resulting circuit are saved in
+        `circuit.serial`, so they are committed with it.
+        """
         observations, chosen = self._select_pending(ids)
         try:
             circuit = apply_observations(self.load_circuit(), chosen)
         except ValueError as e:
             raise ProjectError(str(e)) from e
+        readings = self.serial_readings()
+        if readings is not None:
+            circuit = circuit.model_copy(update={"serial": serial_record(circuit, readings)})
         self.save_circuit(circuit)
         accepted = self._set_status(observations, chosen, ObservationStatus.ACCEPTED)
         self._reviewed()

@@ -8,7 +8,9 @@ from benchlog.core import prs
 from benchlog.core.branches import create_branch
 from benchlog.core.models import Circuit, Wire
 from benchlog.core.project import Project, ProjectError
+from benchlog.core.reconcile import SerialReadings
 from benchlog.core.repo import Repo
+from benchlog.core.scan import reading_from_circuit
 from benchlog.core.serialize import dump, load_circuit
 
 EXAMPLES = Path(__file__).parent.parent / "examples" / "circuits"
@@ -168,7 +170,7 @@ def test_not_supported_is_listed_never_a_pass(project: Project):
     commit_circuit(project, with_w5_at("A6"), "Use GPIO32 instead")
     detail = prs.get(project, prs.create(project, "feature", "main", "Pot on GPIO32").id)
     assert detail.merge.allowed is True and detail.merge.warnings == []
-    assert detail.merge.not_checked == ["No serial data recorded. Connect the ESP32 and run the checks from the web app."]
+    assert detail.merge.not_checked == ["No serial results saved with this circuit. Scan with the ESP32 connected and accept the proposals."]
     serial = next(r for r in detail.checks.results if r.check == "serial_conflicts")
     assert serial.status == "not_supported"
 
@@ -180,6 +182,34 @@ def test_fail_blocks_even_with_warnings(project: Project):
     detail = prs.get(project, prs.create(project, "feature", "main", "Both").id)
     assert detail.merge.allowed is False and detail.merge.reason.startswith("checks failed: GPIO12 held high")
     assert len(detail.merge.warnings) == 1
+
+
+def test_saved_serial_conflict_blocks_merge(project: Project):
+    # On the branch, a scan with the ESP32 sees a new wire from GPIO18 to GND, but GPIO18 reads floating.
+    grounded = with_w5_at("A6").model_copy(update={"wires": [*with_w5_at("A6").wires, Wire(id="w7", a="J7", b="R-7")]})
+    commit_circuit(project, with_w5_at("A6"), "Use GPIO32 instead")
+    probe = {g: "floating" for g in (4, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33)}
+    project.scan(reading_from_circuit(grounded, "simulated"), serial=SerialReadings(probed_at="2026-09-26T12:00:00+00:00", pins=probe))
+    project.accept_observations()
+    project.commit("Ground GPIO18")
+
+    detail = prs.get(project, prs.create(project, "feature", "main", "Ground GPIO18").id)
+    serial = next(r for r in detail.checks.results if r.check == "serial_conflicts")
+    assert serial.status == "fail" and serial.ids == ["esp32.GPIO18"]
+    assert detail.merge.allowed is False
+    assert detail.merge.reason.startswith("checks failed: GPIO18 should read pulled_low (tied to GND) but reads floating")
+
+
+def test_saved_serial_match_counts_on_the_pr(project: Project):
+    commit_circuit(project, with_w5_at("A6"), "Use GPIO32 instead")
+    probe = {g: "floating" for g in (4, 13, 14, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33)}
+    project.scan(reading_from_circuit(with_w5_at("A7"), "simulated"), serial=SerialReadings(probed_at="2026-09-26T12:00:00+00:00", pins=probe))
+    project.accept_observations()
+    project.commit("w5 to GPIO33")
+    detail = prs.get(project, prs.create(project, "feature", "main", "Pot on GPIO33").id)
+    serial = next(r for r in detail.checks.results if r.check == "serial_conflicts")
+    assert serial.status == "pass" and detail.merge.not_checked == []
+    assert detail.merge.allowed is True
 
 
 def test_merge_moves_the_board_state_when_the_board_matched_the_branch(project: Project):

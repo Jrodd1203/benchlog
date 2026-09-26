@@ -285,3 +285,96 @@ def test_routes(project: Project):
     serial = next(r for r in report["results"] if r["check"] == "serial_conflicts")
     assert serial["status"] == "not_supported"  # no ESP32 connected
     assert client.get("/api/checks", params={"commit": project.repo.head()[:7]}).json() == report
+
+
+# ── Serial results saved in circuit.json ──────────────────────────────────────
+
+from benchlog.core.board_state import fingerprint  # noqa: E402
+from benchlog.core.reconcile import SerialReadings, serial_record  # noqa: E402
+from benchlog.core.scan import reading_from_circuit  # noqa: E402
+
+
+def readings(pins: dict[int, str] = ALL_FLOATING, i2c: list[str] | None = None) -> SerialReadings:
+    return SerialReadings(probed_at="2026-09-26T12:00:00+00:00", port="/dev/fake", agent="0.1.0", pins=pins, i2c=i2c)
+
+
+def grounded_18() -> Circuit:
+    """GPIO18 (I7's row) wired to the GND rail."""
+    return add(load("working"), Wire(id="w7", a="J7", b="R-7"))
+
+
+def saved(circuit: Circuit, r: SerialReadings) -> Circuit:
+    return circuit.model_copy(update={"serial": serial_record(circuit, r)})
+
+
+def test_serial_record_contents():
+    record = serial_record(grounded_18(), readings(i2c=[]))
+    assert (record.probed_at, record.port, record.agent) == ("2026-09-26T12:00:00+00:00", "/dev/fake", "0.1.0")
+    assert record.wiring == fingerprint(grounded_18())
+    pin18 = next(p for p in record.pins if p.gpio == 18)
+    assert (pin18.expected, pin18.actual, pin18.verdict) == ("pulled_low", "floating", "conflict")
+    assert pin18.message.startswith("GPIO18 should read pulled_low (tied to GND) but reads floating")
+    assert record.i2c == []
+
+
+def test_saved_serial_round_trips_through_circuit_json(tmp_path: Path):
+    circuit = saved(grounded_18(), readings(i2c=["0x3c"]))
+    dump(circuit, tmp_path / "circuit.json")
+    assert load_circuit(tmp_path / "circuit.json") == circuit
+
+
+def test_fingerprint_ignores_saved_serial():
+    assert fingerprint(saved(grounded_18(), readings())) == fingerprint(grounded_18())
+
+
+def test_saved_serial_conflict_fails():
+    [result] = serial_conflicts(saved(grounded_18(), readings()))
+    assert (result.status, result.ids) == ("fail", ["esp32.GPIO18"])
+    assert "reads floating" in result.message
+
+
+def test_saved_serial_match_passes():
+    [result] = serial_conflicts(saved(grounded_18(), readings(ALL_FLOATING | {18: "pulled_low"})))
+    assert result.status == "pass" and "probed 2026-09-26T12:00:00+00:00" in result.message
+
+
+def test_no_saved_serial_is_not_supported():
+    [result] = serial_conflicts(grounded_18())
+    assert result.status == "not_supported" and result.message.startswith("No serial results saved")
+
+
+def test_stale_saved_serial_is_not_supported():
+    edited = saved(load("working"), readings())
+    edited = edited.model_copy(update={"wires": [*edited.wires, Wire(id="w7", a="J7", b="R-7")]})
+    [result] = serial_conflicts(edited)
+    assert result.status == "not_supported" and "before the circuit was last edited" in result.message
+
+
+def test_saved_i2c_results():
+    circuit = add(load("working"), bme280())
+    assert statuses(i2c_missing(saved(circuit, readings(i2c=["0x76"])))) == ["pass"]
+    [missing] = i2c_missing(saved(circuit, readings(i2c=[])))
+    assert (missing.status, missing.ids) == ("fail", ["bme"])
+    [unscanned] = i2c_missing(saved(circuit, readings(i2c=None)))
+    assert unscanned.status == "not_supported" and unscanned.message == "The I2C bus wasn't scanned."
+
+
+def test_accepting_proposals_saves_serial_results(project: Project):
+    project.scan(reading_from_circuit(grounded_18(), "simulated"), serial=readings(i2c=[]))
+    project.accept_observations()
+    circuit = project.load_circuit()
+    assert circuit.serial is not None and circuit.serial.wiring == fingerprint(circuit)
+    project.commit("Ground GPIO18")
+
+    # The saved data is committed, so the checks work on that commit without the board.
+    report = run_checks(project.circuit_at("HEAD"))
+    serial = next(r for r in report.results if r.check == "serial_conflicts")
+    assert serial.status == "fail" and serial.ids == ["esp32.GPIO18"]
+    assert report.status == "fail"
+
+
+def test_scan_without_serial_saves_nothing(project: Project):
+    project.scan(reading_from_circuit(grounded_18(), "simulated"), serial=readings())
+    project.scan(reading_from_circuit(grounded_18(), "simulated"))  # rescanned without the ESP32
+    project.accept_observations()
+    assert project.load_circuit().serial is None

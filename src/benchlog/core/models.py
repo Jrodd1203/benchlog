@@ -44,11 +44,39 @@ class Wire(_Model):
     label: str | None = Field(default=None, description="Optional human name, e.g. 'pot signal'.")
 
 
+class SerialPinResult(_Model):
+    gpio: int
+    expected: Literal["floating", "pulled_low", "pulled_high"] | None = None
+    actual: str | None = Field(default=None, description="What the agent read; null if the pin wasn't probed.")
+    verdict: Literal["confirmed", "conflict", "no_expectation", "not_checked"]
+    message: str | None = None
+
+
+class SerialI2cResult(_Model):
+    address: str
+    component: str | None = None
+    status: Literal["confirmed", "missing", "unexpected"]
+
+
+class SerialRecord(_Model):
+    """Serial verdicts saved with the circuit, so checks can use them on any commit."""
+
+    probed_at: str
+    port: str | None = None
+    agent: str | None = Field(default=None, description="Firmware version.")
+    wiring: str = Field(description="Fingerprint of the wires and parts it was checked against.")
+    pins: list[SerialPinResult] = []
+    i2c: list[SerialI2cResult] | None = Field(default=None, description="Null if I2C wasn't scanned.")
+
+
 class Circuit(_Model):
     schema_version: Literal[1] = 1
     board: str = Field(default="bb830", description="Breadboard template id.")
     components: list[Component] = []
     wires: list[Wire] = []
+    serial: SerialRecord | None = Field(
+        default=None, description="What the ESP32 serial agent sensed when scan proposals were last accepted."
+    )
 
     @model_validator(mode="after")
     def _check_holes(self) -> "Circuit":
