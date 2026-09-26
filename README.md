@@ -35,3 +35,9 @@ npm run dev                  # proxies /api to http://127.0.0.1:8000
 ```
 
 Run the API with `benchlog serve`.
+
+**macOS gotcha:** if `import benchlog` or the `benchlog` command suddenly fails with
+`ModuleNotFoundError`, macOS (usually iCloud Desktop/Documents sync) has marked the editable-install
+`.pth` file hidden and Python 3.12 skips hidden `.pth` files. Fix with
+`chflags nohidden .venv/lib/python*/site-packages/*.pth`, or keep the repo outside iCloud-synced folders.
+`pytest` works either way.

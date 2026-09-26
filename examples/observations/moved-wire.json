@@ -1,0 +1,17 @@
+{
+  "after": {
+    "a": "F21",
+    "b": "A12"
+  },
+  "before": {
+    "a": "F21",
+    "b": "A4"
+  },
+  "confidence": 0.82,
+  "id": "obs1",
+  "kind": "moved",
+  "object_id": "w5",
+  "object_type": "wire",
+  "status": "pending",
+  "uncertain_holes": []
+}

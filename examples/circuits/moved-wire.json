@@ -1,0 +1,115 @@
+{
+  "board": "bb830",
+  "components": [
+    {
+      "id": "esp32",
+      "model": "DOIT ESP32 DevKit V1",
+      "pins": {
+        "3V3": "I15",
+        "EN": "B1",
+        "GND1": "B13",
+        "GND2": "I14",
+        "GPIO1": "I3",
+        "GPIO12": "B12",
+        "GPIO13": "B14",
+        "GPIO14": "B11",
+        "GPIO15": "I13",
+        "GPIO16": "I10",
+        "GPIO17": "I9",
+        "GPIO18": "I7",
+        "GPIO19": "I6",
+        "GPIO2": "I12",
+        "GPIO21": "I5",
+        "GPIO22": "I2",
+        "GPIO23": "I1",
+        "GPIO25": "B8",
+        "GPIO26": "B9",
+        "GPIO27": "B10",
+        "GPIO3": "I4",
+        "GPIO32": "B6",
+        "GPIO33": "B7",
+        "GPIO34": "B4",
+        "GPIO35": "B5",
+        "GPIO36": "B2",
+        "GPIO39": "B3",
+        "GPIO4": "I11",
+        "GPIO5": "I8",
+        "VIN": "B15"
+      },
+      "type": "esp32_devkit_v1_30"
+    },
+    {
+      "id": "led1",
+      "pins": {
+        "anode": "E18",
+        "cathode": "F18"
+      },
+      "type": "led",
+      "value": "red"
+    },
+    {
+      "id": "pot1",
+      "pins": {
+        "1": "H20",
+        "3": "H22",
+        "wiper": "H21"
+      },
+      "type": "potentiometer",
+      "value": "10kΩ"
+    },
+    {
+      "id": "r1",
+      "pins": {
+        "1": "A14",
+        "2": "A18"
+      },
+      "type": "resistor",
+      "value": "220Ω"
+    }
+  ],
+  "schema_version": 1,
+  "wires": [
+    {
+      "a": "J15",
+      "b": "R+15",
+      "color": "red",
+      "id": "w1",
+      "label": "3V3 to + rail"
+    },
+    {
+      "a": "J14",
+      "b": "R-14",
+      "color": "black",
+      "id": "w2",
+      "label": "GND to - rail"
+    },
+    {
+      "a": "J20",
+      "b": "R+20",
+      "color": "red",
+      "id": "w3",
+      "label": "pot high"
+    },
+    {
+      "a": "J22",
+      "b": "R-22",
+      "color": "black",
+      "id": "w4",
+      "label": "pot low"
+    },
+    {
+      "a": "F21",
+      "b": "A12",
+      "color": "yellow",
+      "id": "w5",
+      "label": "pot signal"
+    },
+    {
+      "a": "J18",
+      "b": "R-18",
+      "color": "black",
+      "id": "w6",
+      "label": "LED ground"
+    }
+  ]
+}
