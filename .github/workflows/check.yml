@@ -7,11 +7,25 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Core only: proves benchlog core installs and passes without OpenCV or FastAPI
+          # (vision and server tests skip themselves).
+          - name: core
+            extras: dev
+          # Everything: runs the vision, camera, calibration and API tests too.
+          - name: full
+            extras: vision,server,dev
+    name: test (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # Core only: no OpenCV or FastAPI needed in CI.
-      - run: pip install -e ".[dev]"
+      - if: contains(matrix.extras, 'vision')
+        # OpenCV's GUI build loads these at import time; the runner image may not have them.
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libgl1 libglib2.0-0
+      - run: pip install -e ".[${{ matrix.extras }}]"
       - run: pytest
