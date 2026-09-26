@@ -25,7 +25,10 @@ MAX_PLAUSIBLE_CHANGES = 30
 
 class MisreadError(ValueError):
     def __init__(self, count: int) -> None:
-        super().__init__(f"{count} changes in one scan")
+        super().__init__(
+            f"{count} changes seen at once, which looks like a misread board. Check the lighting and "
+            "alignment and scan again, or scan with sync if the board really matches the circuit"
+        )
         self.count = count
 
 

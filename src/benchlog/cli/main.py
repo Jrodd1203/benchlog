@@ -16,8 +16,8 @@ from benchlog.core.diff import diff as circuit_diff
 from benchlog.core.models import Circuit, Observation, ObservationKind
 from benchlog.core.project import CIRCUIT_PATH, Project, ProjectError
 from benchlog.core.repo import GitError
-from benchlog.core.scan import BoardReading, MisreadError, reading_from_circuit
-from benchlog.core.scan import scan as run_scan
+from benchlog.camera import read_board
+from benchlog.core.scan import reading_from_circuit
 
 app = typer.Typer(help="Version control for breadboard prototypes.", no_args_is_help=True)
 
@@ -83,49 +83,6 @@ def init(board: str = typer.Option("bb830", help="Breadboard template id.")) -> 
     print(f"project root: {project.repo.root}")
 
 
-def _read_board(camera: int, image: Path | None) -> BoardReading:
-    """Read hole occupancy from a photo or the camera using the vision pipeline."""
-    try:
-        import cv2
-
-        from benchlog.vision.capture import analyse_image
-    except ImportError as e:
-        raise ProjectError(
-            "camera scanning needs the vision pipeline (install with `pip install -e '.[vision]'`); "
-            "use --simulate CIRCUIT.json until then"
-        ) from e
-
-    if image is not None:
-        frame = cv2.imread(str(image))
-        if frame is None:
-            raise ProjectError(f"can't read image {image}")
-        source = f"image {image.name}"
-    else:
-        cap = cv2.VideoCapture(camera)
-        try:
-            frame = None
-            for _ in range(10):  # let exposure settle before keeping a frame
-                ok, grabbed = cap.read()
-                frame = grabbed if ok else frame
-        finally:
-            cap.release()
-        if frame is None:
-            raise ProjectError(f"can't read from camera {camera}")
-        source = f"camera {camera}"
-
-    result = analyse_image(frame)
-    if not result.present:
-        raise ProjectError("; ".join(result.warnings) or "no breadboard found")
-    if result.upside_down:
-        raise ProjectError("the board is upside down; rotate it so row 1 is on the right and scan again")
-    return BoardReading(
-        occupied=result.occupied,
-        confidence=0.6 if result.warnings else 1.0,
-        warnings=result.warnings,
-        source=source,
-    )
-
-
 def _describe_observation(o: Observation) -> str:
     before, after = o.before or {}, o.after or {}
     if o.kind == ObservationKind.MOVED:
@@ -157,25 +114,14 @@ def scan(
     if simulate is not None:
         reading = reading_from_circuit(Circuit.model_validate_json(simulate.read_text()), f"simulated {simulate.name}")
     else:
-        reading = _read_board(camera, image)
+        reading = read_board(camera, image)
     for warning in reading.warnings:
         print(f"[yellow]warning:[/yellow] {escape(warning)}")
 
+    observations = project.scan(reading, sync=sync)
     if sync:
-        project.scans.save_latest(reading)
-        project.scans.promote_latest()
-        project.save_observations([])
         print(f"board recorded as matching the circuit ({len(reading.occupied)} occupied holes)")
         return
-
-    try:
-        observations = run_scan(project.load_circuit(), project.scans, reading, project.pending_observations())
-    except MisreadError as e:
-        raise ProjectError(
-            f"{e.count} changes seen at once, which looks like a misread board. Check the lighting and "
-            "alignment and scan again, or run `benchlog scan --sync` if the board really matches the circuit"
-        ) from e
-    project.save_observations(observations)
     if not observations:
         print("no changes seen since the last reviewed scan")
         return
