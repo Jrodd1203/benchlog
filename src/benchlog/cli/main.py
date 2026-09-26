@@ -1,5 +1,8 @@
 """benchlog command line. Owner: Person 1. Commands are stubs until the core lands."""
 
+import json
+from pathlib import Path
+
 import typer
 from rich import print
 
@@ -51,6 +54,18 @@ def log() -> None:
 def check() -> None:
     """Run circuit checks against the current circuit."""
     _todo("check")
+
+
+@app.command()
+def schema(output: Path | None = typer.Option(None, "-o", "--output", help="Write to a file instead of stdout.")) -> None:
+    """Print the JSON Schema of the types shared with the web UI."""
+    from benchlog.core.schema import json_schema
+
+    text = json.dumps(json_schema(), indent=2, ensure_ascii=False) + "\n"
+    if output:
+        output.write_text(text)
+    else:
+        typer.echo(text, nl=False)
 
 
 @app.command()
