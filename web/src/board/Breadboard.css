@@ -1,0 +1,158 @@
+/* A realistic white BB830 in both light and dark themes, so it looks like the board on the bench. */
+.breadboard {
+  --bb-body: #f6f5f0;
+  --bb-body-edge: #dcd9cf;
+  --bb-hole: #2e2f33;
+  --bb-print: #4b4f57;
+  --bb-channel: #e6e3da;
+  --bb-part-text: #1f2329;
+
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+}
+
+.bb-body {
+  fill: var(--bb-body);
+  stroke: var(--bb-body-edge);
+  stroke-width: 0.35;
+}
+
+.bb-channel {
+  fill: var(--bb-channel);
+}
+
+.bb-rail-line {
+  stroke-width: 0.3;
+}
+
+.bb-rail-line.plus {
+  stroke: #d42a2a;
+}
+
+.bb-rail-line.minus {
+  stroke: #1d1f24;
+}
+
+.bb-label {
+  fill: var(--bb-print);
+  font-size: 1.5px;
+  text-anchor: middle;
+}
+
+.bb-label.rail {
+  font-size: 2px;
+  font-weight: 700;
+}
+
+.bb-label.rail.plus {
+  fill: #d42a2a;
+}
+
+.bb-label.rail.minus {
+  fill: #1d1f24;
+}
+
+.bb-hole {
+  fill: var(--bb-hole);
+}
+
+.bb-pin {
+  stroke: rgb(0 0 0 / 0.45);
+  stroke-width: 0.15;
+}
+
+.bb-part.esp32 rect {
+  fill: rgb(28 45 90 / 0.12);
+  stroke: #2f5fb3;
+  stroke-width: 0.25;
+}
+
+.bb-part.esp32 text {
+  font-weight: 600;
+}
+
+.bb-part line {
+  stroke-width: 0.9;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+
+.bb-part text {
+  fill: var(--bb-part-text);
+  font-size: 1.5px;
+  text-anchor: middle;
+}
+
+/* A thin light edge under every wire keeps black wires readable where they cross holes. */
+.bb-wire-edge,
+.bb-wire {
+  fill: none;
+  stroke-linecap: round;
+}
+
+.bb-wire-edge {
+  stroke: rgb(255 255 255 / 0.9);
+  stroke-width: 1;
+}
+
+.bb-wire {
+  stroke-width: 0.65;
+}
+
+.bb-wire-label rect {
+  fill: rgb(31 28 22 / 0.88);
+}
+
+.bb-wire-label text {
+  fill: #fbf8f0;
+  font-size: 1.5px;
+  text-anchor: middle;
+}
+
+.bb-ring {
+  fill: none;
+  stroke-width: 0.3;
+}
+
+.bb-ring.added {
+  stroke: #2d7a3e;
+  fill: rgb(45 122 62 / 0.18);
+  animation: bb-pulse 1.4s ease-in-out infinite;
+}
+
+.bb-ring.removed {
+  stroke: #b3261e;
+  animation: bb-pulse 1.4s ease-in-out infinite;
+}
+
+.bb-ghost {
+  fill: rgb(179 38 30 / 0.22);
+  stroke: #b3261e;
+  stroke-width: 0.15;
+}
+
+.bb-fade {
+  animation: bb-fade 140ms ease-out;
+}
+
+@keyframes bb-fade {
+  from {
+    opacity: 0.35;
+  }
+}
+
+@keyframes bb-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bb-fade,
+  .bb-ring.added,
+  .bb-ring.removed {
+    animation: none;
+  }
+}
