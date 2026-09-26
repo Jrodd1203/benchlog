@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from benchlog.core.checks.store import check_project
 from benchlog.core.diff import CircuitDiff, describe
 from benchlog.core.diff import diff as circuit_diff
 from benchlog.core.models import Circuit, Observation, ObservationKind
@@ -274,6 +275,11 @@ def commit(
     print(f"[green]\\[{c.short_sha}][/green] {escape(c.subject)}")
     d = circuit_diff(before, project.load_circuit())
     print(f"  {_summary(d)}")
+    # Checks never block a commit; the report is saved so it can be looked up later.
+    report = check_project(project)
+    failing = sum(r.status == "fail" for r in report.results)
+    detail = f" ({failing} failing)" if failing else ""
+    print(f"  checks: {STATUS_STYLE[report.status]}{detail}; details with `benchlog check`")
 
 
 @app.command()
@@ -403,10 +409,32 @@ def camera_calibrate(
     print("scans now track the board from this calibration; check it with `benchlog camera preview`")
 
 
+STATUS_STYLE = {
+    "pass": "[green]pass[/green]",
+    "fail": "[red]fail[/red]",
+    "needs_confirmation": "[yellow]confirm[/yellow]",
+    "not_supported": "[dim]n/a[/dim]",
+}
+
+
 @app.command()
+@_handle_errors
 def check() -> None:
-    """Run circuit checks against the current circuit."""
-    _todo("check")
+    """Run circuit checks against the current circuit. Exits 1 if any check fails."""
+    report = check_project(Project.find())
+    table = Table(box=None, pad_edge=False)
+    for col in ("status", "check", "message", "involves"):
+        table.add_column(col)
+    for r in report.results:
+        table.add_row(STATUS_STYLE[r.status], r.check, escape(r.message), escape(", ".join(r.ids)))
+    Console().print(table)
+    where = f"commit {report.commit[:7]} (saved)" if report.commit else "uncommitted changes"
+    print(f"\n[bold]{STATUS_STYLE[report.status]}[/bold] on {where}")
+    if report.not_supported:
+        names = ", ".join(sorted({r.check for r in report.not_supported}))
+        print(f"[dim]not checked (missing data): {names}[/dim]")
+    if report.status == "fail":
+        raise typer.Exit(1)
 
 
 @app.command()
