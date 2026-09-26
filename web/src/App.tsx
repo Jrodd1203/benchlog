@@ -58,7 +58,7 @@ export default function App() {
 
       {screen === 'projects' && <ProjectsScreen onOpen={open} />}
       {screen === 'setup' && <SetupScreen onDone={() => setScreen('workspace')} />}
-      {screen === 'workspace' && <WorkspaceScreen />}
+      {screen === 'workspace' && <WorkspaceScreen onGoToTimeline={() => setScreen('timeline')} />}
       {screen === 'timeline' && <TimelineScreen />}
       {screen in STUBS && <StubScreen section={STUBS[screen as StubId]} />}
     </div>
