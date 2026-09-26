@@ -16,8 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
+from benchlog.core.esp32_source import Esp32Source, NullEsp32Source
 from benchlog.core.models import Observation, ObservationKind, ObservationStatus
-from benchlog.core.serial_reader import SerialReader
 
 # GPIO number → hole name for the DOIT ESP32 DevKit V1 placed at rows 1-15.
 # Generated from parts.py: left col B, right col I, top_row=1.
@@ -68,17 +68,19 @@ def _gpio_for_strip(hole: str) -> int | None:
 
 def reconcile(
     vision_obs: Sequence[Observation],
-    serial: SerialReader | None,
+    serial: Esp32Source | None = None,
 ) -> list[ReconciledObservation]:
     """Merge vision observations with live ESP32 pin state.
 
     Args:
         vision_obs: Raw observations from occupancy_diff().
-        serial:     Live SerialReader (may be None if ESP32 not connected).
+        serial:     Any Esp32Source implementation, or None to run vision-only.
+                    Pass NullEsp32Source() to keep call sites uniform without a device.
 
     Returns:
         ReconciledObservation list, sorted high-confidence first.
     """
+    src: Esp32Source = serial if serial is not None else NullEsp32Source()
     results: list[ReconciledObservation] = []
 
     for obs in vision_obs:
@@ -90,17 +92,17 @@ def reconcile(
 
         gpio = _gpio_for_strip(hole)
 
-        # No ESP32 connected or no GPIO on this strip → vision only
-        if serial is None or gpio is None:
+        # No GPIO on this strip or source not alive → vision only
+        if not src.is_alive() or gpio is None:
             updated = obs.model_copy(update={"confidence": obs.confidence, "uncertain_holes": [hole] if gpio is None else []})
             results.append(ReconciledObservation(updated, vision_only=True, esp32_confirms=False))
             continue
 
         # Check ESP32 agreement
         if obs.kind == ObservationKind.ADDED:
-            esp32_agrees = serial.gpio_stable_high(gpio)
+            esp32_agrees = src.gpio_stable_high(gpio)
         else:  # REMOVED
-            esp32_agrees = serial.gpio_stable_low(gpio)
+            esp32_agrees = src.gpio_stable_low(gpio)
 
         if esp32_agrees:
             # Both agree: boost confidence
@@ -116,8 +118,8 @@ def reconcile(
             results.append(ReconciledObservation(updated, vision_only=True, esp32_confirms=False))
 
     # Emit ESP32-only observations (pin changed but vision didn't notice)
-    if serial is not None:
-        window = serial.window()
+    if src.is_alive():
+        window = src.window()
         if len(window) >= 2:
             prev, curr = window[-2], window[-1]
             flagged_holes = {r.observation.object_id for r in results}

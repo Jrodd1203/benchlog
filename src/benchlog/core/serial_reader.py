@@ -57,6 +57,9 @@ class SerialReader:
     def stop(self) -> None:
         self._running = False
 
+    def is_alive(self) -> bool:
+        return self._running and self._thread is not None and self._thread.is_alive()
+
     def latest(self) -> PinSnapshot | None:
         with self._lock:
             return self._window[-1] if self._window else None
@@ -101,6 +104,7 @@ class SerialReader:
                             self._window.append(snap)
         except serial.SerialException as e:
             print(f"[serial] {e}")
+            self._running = False
 
 
 def find_esp32_port() -> str | None:
