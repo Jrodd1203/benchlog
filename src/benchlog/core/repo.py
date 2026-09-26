@@ -58,6 +58,13 @@ class Repo:
     def add(self, *paths: Path) -> None:
         self.run("add", "--", *(self._rel(p) for p in paths))
 
+    def has_staged_changes(self) -> bool:
+        try:
+            self.run("diff", "--cached", "--quiet")  # exits 1 when something is staged
+            return False
+        except GitError:
+            return True
+
     def commit(self, message: str) -> Commit:
         """Commit what is staged. Raises GitError if nothing is staged."""
         self.run("commit", "--quiet", "-m", message)
