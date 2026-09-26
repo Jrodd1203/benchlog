@@ -3,6 +3,8 @@
     benchlog/circuit.json        committed: the accepted circuit
     .benchlog/observations.json  gitignored: scan results waiting for review
     .benchlog/calibration.json   gitignored: camera calibration for this workstation
+    .benchlog/baseline/          gitignored: empty-board capture from `benchlog.vision.capture`
+    .benchlog/scans/             gitignored: reference and latest board readings
 """
 
 import json
@@ -12,6 +14,7 @@ from pydantic import TypeAdapter
 
 from benchlog.core.models import Circuit, Observation, ObservationStatus
 from benchlog.core.repo import Commit, GitError, Repo
+from benchlog.core.scan import ScanStore
 from benchlog.core.serialize import dump
 
 CIRCUIT_PATH = Path("benchlog/circuit.json")
@@ -31,6 +34,7 @@ class Project:
         self.repo = repo
         self.circuit_path = repo.root / CIRCUIT_PATH
         self.observations_path = repo.root / OBSERVATIONS_PATH
+        self.scans = ScanStore(repo.root / STATE_DIR)
 
     @classmethod
     def find(cls, start: Path | None = None) -> "Project":
