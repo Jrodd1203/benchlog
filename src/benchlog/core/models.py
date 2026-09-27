@@ -26,6 +26,11 @@ class ComponentType(str, Enum):
     LED = "led"
     POTENTIOMETER = "potentiometer"
     I2C_MODULE = "i2c_module"  # sensor/display breakout; SDA and SCL pins, address in `value` or known `model`
+    DIODE = "diode"  # pins: anode, cathode (the band marks the cathode)
+    CAPACITOR_CERAMIC = "capacitor_ceramic"  # pins: 1, 2 (not polarised)
+    CAPACITOR_ELECTROLYTIC = "capacitor_electrolytic"  # pins: +, -
+    TRANSISTOR_NPN = "transistor_npn"  # pins: E, B, C (order depends on the model)
+    TRANSISTOR_PNP = "transistor_pnp"
 
 
 class Component(_Model):

@@ -23,12 +23,11 @@ from benchlog.vision.colors import color_name
 PITCH_MM = 2.54
 MIN_PIXEL_DIFF = 20.0  # a pixel must change at least this much (Lab distance), however quiet the scan
 PIXEL_NOISE_SIGMAS = 6.0  # ... and this many robust standard deviations above the board's typical pixel
+MIN_WEAK_PIXEL_DIFF = 18.0  # weaker changes (thin bare legs) count where they connect to a strong one
+WEAK_NOISE_SIGMAS = 5.0  # lower picks up shadows; legs are found along the axis instead
 MIN_OBJECT_AREA_PITCH2 = 0.1  # smaller blobs (in hole-pitch squared) are noise: a wire end is ~0.15
 EDGE_BAND_PITCH = 1.2  # width (in hole pitches) of the board's outer edge band that's ignored
 NEAR_HOLE_PITCH = 0.5  # an object must reach within this of a hole centre: parts plug into holes
-JOIN_GAP_PITCH = 1.5  # pieces this close (along a shared line) are one object, e.g. a resistor's legs
-JOIN_ANGLE_DEG = 20.0
-JOIN_OFFSET_PITCH = 0.5  # how far off each other's line two pieces may be and still join
 BODY_FRACTION = 0.6  # the body is where the object is at least this fraction of its thickest
 
 
@@ -52,6 +51,9 @@ class BoardObject:
     body_width_mm: float = 0.0
     body_length_mm: float = 0.0
     body_color: str = "grey"
+    body_saturation: float = 0.0  # median, 0-255
+    body_value: float = 0.0  # median brightness, 0-255: black parts are low
+    endpoints: list[tuple[float, float]] = field(default_factory=list, repr=False)  # tips of its centre line (px)
 
     @property
     def aspect(self) -> float:
@@ -68,7 +70,11 @@ class BoardObject:
 
 
 def _changed_pixels(cal: Calibration, distance: np.ndarray, pitch: float) -> tuple[np.ndarray, float]:
-    """Binary mask of pixels that changed, and the threshold used.
+    """Binary mask of pixels that changed, and the (strong) threshold used.
+
+    Two levels, like an edge detector: pixels that changed strongly start an object, and weaker
+    changes are kept only where they connect to one. A part's thin bare legs are faint from above
+    but attached to its body, so they come along; isolated specks and glints don't.
 
     The board's outer edge band is left out: when the board moves, its edges and sides (it has
     height) never line up exactly with the calibration image, and nothing plugs in there anyway.
@@ -78,28 +84,20 @@ def _changed_pixels(cal: Calibration, distance: np.ndarray, pitch: float) -> tup
     values = distance[board]
     median = float(np.median(values))
     spread = 1.4826 * float(np.median(np.abs(values - median)))
-    threshold = max(MIN_PIXEL_DIFF, median + PIXEL_NOISE_SIGMAS * spread)
-    mask = ((distance > threshold) & board).astype(np.uint8) * 255
-    # Close small gaps inside one object (bands on a resistor, glints on insulation), then drop specks.
-    close = max(3, round(pitch * 0.3)) | 1
+    strong = max(MIN_PIXEL_DIFF, median + PIXEL_NOISE_SIGMAS * spread)
+    weak = max(MIN_WEAK_PIXEL_DIFF, median + WEAK_NOISE_SIGMAS * spread)
+    weak_mask = ((distance > weak) & board).astype(np.uint8) * 255
     opened = max(3, round(pitch * 0.12)) | 1
+    strong_mask = ((distance > strong) & board).astype(np.uint8) * 255
+    strong_mask = cv2.morphologyEx(strong_mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (opened, opened)))
+    # Keep the weak regions that contain a strong seed.
+    count, labels = cv2.connectedComponents(weak_mask, connectivity=8)
+    seeded = np.unique(labels[strong_mask > 0])
+    mask = np.isin(labels, seeded[seeded > 0]).astype(np.uint8) * 255
+    # Close small gaps inside one object (bands on a resistor, a glint on insulation).
+    close = max(3, round(pitch * 0.3)) | 1
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close, close)))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (opened, opened)))
-    return mask, threshold
-
-
-def _body(blob: np.ndarray, aligned: np.ndarray, axis_angle: float, mm_per_px: float) -> tuple[float, float, str]:
-    """(width, length, color) of the object's thickest part, in mm."""
-    thickness = cv2.distanceTransform(blob, cv2.DIST_L2, 5)
-    widest = float(thickness.max())
-    body = thickness >= BODY_FRACTION * widest
-    # The body is the thick core plus the rim around it (the distance transform thins it).
-    body = cv2.dilate(body.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=max(1, round(widest * BODY_FRACTION))) & (blob > 0)
-    ys, xs = np.nonzero(body)
-    theta = np.deg2rad(axis_angle)
-    along = xs * np.cos(theta) + ys * np.sin(theta)
-    length = float(along.max() - along.min() + 1) if len(along) else 0.0
-    return 2 * widest * mm_per_px, length * mm_per_px, color_name(aligned[body > 0]) if len(xs) else "grey"
+    return mask, strong
 
 
 def _near_a_hole(contour: np.ndarray, centres: np.ndarray, reach: float) -> bool:
@@ -109,42 +107,43 @@ def _near_a_hole(contour: np.ndarray, centres: np.ndarray, reach: float) -> bool
     return any(cv2.pointPolygonTest(contour, (float(cx), float(cy)), True) > -reach for cx, cy in nearby)
 
 
-def _cross(a: np.ndarray, b: np.ndarray) -> float:
-    return float(a[0] * b[1] - a[1] * b[0])
+def _body(
+    blob: np.ndarray, aligned: np.ndarray, axis_angle: float, mm_per_px: float
+) -> tuple[float, float, str, float, float]:
+    """(width, length, color, saturation, brightness) of the object's thickest part (sizes in mm)."""
+    thickness = cv2.distanceTransform(blob, cv2.DIST_L2, 5)
+    widest = float(thickness.max())
+    body = thickness >= BODY_FRACTION * widest
+    # The body is the thick core plus the rim around it (the distance transform thins it).
+    body = cv2.dilate(body.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=max(1, round(widest * BODY_FRACTION))) & (blob > 0)
+    ys, xs = np.nonzero(body)
+    theta = np.deg2rad(axis_angle)
+    along = xs * np.cos(theta) + ys * np.sin(theta)
+    length = float(along.max() - along.min() + 1) if len(along) else 0.0
+    if not len(xs):
+        return 2 * widest * mm_per_px, length * mm_per_px, "grey", 0.0, 0.0
+    hsv = cv2.cvtColor(aligned[body > 0].reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)
+    return (
+        2 * widest * mm_per_px, length * mm_per_px, color_name(aligned[body > 0]),
+        float(np.median(hsv[:, 1])), float(np.median(hsv[:, 2])),
+    )  # fmt: skip
 
 
-def _join_aligned_pieces(mask: np.ndarray, pitch: float) -> np.ndarray:
-    """Bridge gaps between pieces that lie on one line: a resistor's thin legs often break away
-    from its body (bare lead is faint from above), and a glint can split a wire in two."""
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    pieces = [c for c in contours if cv2.contourArea(c) >= 2]
-    out = mask.copy()
-    rects = [cv2.minAreaRect(c) for c in pieces]
-
-    def axis(rect: tuple) -> np.ndarray:
-        (_, _), (w, h), angle = rect
-        theta = np.deg2rad(angle if w >= h else angle + 90)
-        return np.array([np.cos(theta), np.sin(theta)])
-
-    for i in range(len(pieces)):
-        for j in range(i + 1, len(pieces)):
-            ci, cj = np.array(rects[i][0]), np.array(rects[j][0])
-            # The longer piece sets the line; a short piece (a leg stub) may point any way.
-            big, small = (i, j) if max(rects[i][1]) >= max(rects[j][1]) else (j, i)
-            a = axis(rects[big])
-            gap = np.linalg.norm(cj - ci) - (max(rects[i][1]) + max(rects[j][1])) / 2
-            if gap > JOIN_GAP_PITCH * pitch:
-                continue
-            offset = abs(_cross(a, np.array(rects[small][0]) - np.array(rects[big][0])))
-            if offset > JOIN_OFFSET_PITCH * pitch:
-                continue
-            if max(rects[small][1]) > pitch:  # both long: they must also point the same way
-                diff = abs(np.degrees(np.arctan2(_cross(a, axis(rects[small])), a @ axis(rects[small]))))
-                if min(diff, 180 - diff) > JOIN_ANGLE_DEG:
-                    continue
-            thickness = max(2, round(min(min(rects[i][1]), min(rects[j][1]), pitch * 0.3)))
-            cv2.line(out, tuple(np.round(ci).astype(int)), tuple(np.round(cj).astype(int)), 255, thickness)
-    return out
+def _endpoints(blob: np.ndarray) -> list[tuple[float, float]]:
+    """The two tips of the object's centre line: where a wire or a part's legs end, even when curved."""
+    skeleton = cv2.ximgproc.thinning(blob)
+    ys, xs = np.nonzero(skeleton)
+    if len(xs) < 2:
+        return []
+    # A skeleton pixel with a single neighbour is a tip; branches (a shadow, a glint) give extra tips.
+    neighbours = cv2.filter2D((skeleton > 0).astype(np.uint8), -1, np.ones((3, 3), np.uint8)) - 1
+    tips = np.array([(x, y) for x, y in zip(xs, ys) if neighbours[y, x] == 1], dtype=float)
+    if len(tips) < 2:
+        tips = np.column_stack([xs, ys]).astype(float)
+    # The two tips farthest apart are the real ends; shorter branches are side twigs.
+    d = np.linalg.norm(tips[:, None] - tips[None], axis=2)
+    i, j = np.unravel_index(d.argmax(), d.shape)
+    return [tuple(tips[i]), tuple(tips[j])]
 
 
 def _ends(cal: Calibration, contour: np.ndarray, rect: tuple, pitch: float) -> tuple[str, str] | None:
@@ -175,7 +174,6 @@ def find_objects(cal: Calibration, frame: np.ndarray, tracking: Tracking) -> lis
     pitch = hole_pitch_px(cal.holes)
     mm_per_px = PITCH_MM / pitch
     mask, _ = _changed_pixels(cal, distance, pitch)
-    mask = _join_aligned_pieces(mask, pitch)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     min_area = MIN_OBJECT_AREA_PITCH2 * pitch * pitch
     centres = np.array(list(cal.holes.values()))
@@ -197,7 +195,7 @@ def find_objects(cal: Calibration, frame: np.ndarray, tracking: Tracking) -> lis
         pixels = aligned[inside]
         holes = [n for n, (x, y) in cal.holes.items() if blob[min(blob.shape[0] - 1, round(y)), min(blob.shape[1] - 1, round(x))]]
         long_angle = (angle if w >= h else angle + 90) % 180
-        body_width, body_length, body_color = _body(blob, aligned, long_angle, mm_per_px)
+        body_width, body_length, body_color, body_saturation, body_value = _body(blob, aligned, long_angle, mm_per_px)
         objects.append(
             BoardObject(
                 id=len(objects) + 1,
@@ -215,6 +213,9 @@ def find_objects(cal: Calibration, frame: np.ndarray, tracking: Tracking) -> lis
                 body_width_mm=body_width,
                 body_length_mm=body_length,
                 body_color=body_color,
+                body_saturation=body_saturation,
+                body_value=body_value,
+                endpoints=_endpoints(blob),
             )
         )
     return objects

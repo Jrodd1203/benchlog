@@ -47,12 +47,19 @@ def reading_from_frame(frame, source: str, calibration=None) -> BoardReading:
 
         radius = max(2, round(PATCH_RADIUS_PITCH * hole_pitch_px(calibration.holes)))
         colors = hole_colors(frame, tracking.apply(calibration.holes), occupancy.occupied, radius)
+        from benchlog.vision.calibration import change_map
+        from benchlog.vision.objects import find_objects
+        from benchlog.vision.parts import recognize
+
+        _, aligned = change_map(calibration, frame, tracking)
+        parts = recognize(calibration, find_objects(calibration, frame, tracking), aligned)
         warnings = []
         if tracking.shift_px > 3:
             warnings.append(f"board moved {tracking.shift_px:.0f} px / {tracking.rotation_deg:.1f}° since calibration (tracked)")
         return BoardReading(
             occupied=sorted(occupancy.occupied),
             colors=colors,
+            parts=parts,
             confidence=round(min(1.0, tracking.correlation), 3),
             warnings=warnings,
             source=source,

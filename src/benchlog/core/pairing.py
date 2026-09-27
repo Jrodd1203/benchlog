@@ -16,6 +16,7 @@ from benchlog.core.models import (
 )  # fmt: skip
 from benchlog.core.netlist import natural_key
 from benchlog.core.parts import esp32_devkit_v1_30_pins
+from benchlog.core.recognize import WIRE, PartGuess
 
 COLUMNS = LEFT_COLUMNS + RIGHT_COLUMNS
 # Confidence multipliers for guesses that need the user's eye.
@@ -115,6 +116,7 @@ def _straight_runs(holes: list[Hole]) -> list[list[Hole]]:
     return result
 
 
+NEXT_TO_PART_PITCH = 1.5  # changed holes this close to a recognized part belong to it (edge, shadow)
 MIN_ESP32_PINS = 24  # of 30: a few pins can be hidden by wires or misread and it's still an ESP32
 # (left pin column, right pin column) pairs an ESP32 DevKit can straddle the centre channel with.
 _ESP32_COLUMNS = (("A", "H"), ("B", "I"), ("C", "J"))
@@ -151,9 +153,31 @@ def explained_by_footprints(filled: set[Hole], template: BreadboardTemplate) -> 
     return set().union(*(block for _, block in find_esp32s(filled, template)))
 
 
+_ID_PREFIX = {
+    ComponentType.RESISTOR.value: "r", ComponentType.LED.value: "led", ComponentType.DIODE.value: "d",
+    ComponentType.CAPACITOR_CERAMIC.value: "c", ComponentType.CAPACITOR_ELECTROLYTIC.value: "c",
+    ComponentType.TRANSISTOR_NPN.value: "q", ComponentType.TRANSISTOR_PNP.value: "q",
+    ComponentType.POTENTIOMETER.value: "pot", ComponentType.ESP32_DEVKIT_V1_30.value: "esp32",
+    ComponentType.I2C_MODULE.value: "i2c",
+}  # fmt: skip
+
+
+def _new_id(prefix: str, used: set[str]) -> str:
+    """"r1", "led2"... A prefix ending in a digit reads badly with a number: "esp32", then "esp32_2"."""
+    for n in count(1):
+        if prefix[-1].isdigit():
+            candidate = prefix if n == 1 else f"{prefix}_{n}"
+        else:
+            candidate = f"{prefix}{n}"
+        if candidate not in used:
+            return candidate
+    raise AssertionError("unreachable")
+
+
 class _Pairer:
-    def __init__(self, circuit: Circuit, changes: list[HoleChange]) -> None:
+    def __init__(self, circuit: Circuit, changes: list[HoleChange], parts: list[PartGuess] = ()) -> None:
         self.circuit = circuit
+        self.parts = list(parts)
         self.template = TEMPLATES[circuit.board]
         owners = occupied_holes(circuit)
         # Changes that contradict the circuit (a known-empty hole emptied, a known-occupied hole
@@ -176,6 +200,7 @@ class _Pairer:
         # A new ESP32 claims its holes before anything else can pair them up as wires. If a known
         # ESP32 lost its pins, it's more likely that one moved: the component-move logic handles it.
         esp32_moving = any(components[i].type == ComponentType.ESP32_DEVKIT_V1_30 for t, i in self.lost if t == "component")
+        self._recognized_parts()
         if not esp32_moving:
             self._new_esp32s()
         # Single-end wire moves are the most common change, so they claim filled holes first.
@@ -265,6 +290,42 @@ class _Pairer:
                 return
         self._add(ObservationKind.REMOVED, "component", component.id, confidence, before=before)
 
+    def _recognized_parts(self) -> None:
+        """New parts the camera recognized become one observation each, claiming the holes they cover."""
+        owners = occupied_holes(self.circuit)
+        used = {c.id for c in self.circuit.components}
+        for part in sorted(self.parts, key=lambda p: -p.confidence):
+            pins = list(part.pins.values())
+            # A part with a pin in a known hole is already in the circuit (or moving): leave it to the
+            # move logic. A new part covers some of this scan's newly filled holes (its thin legs and
+            # a flat wire's ends often don't register on their own, so any covered hole counts).
+            covered = set(part.claims) | set(pins)
+            if all(h in owners for h in pins):
+                # The same part, already in the circuit: its covered holes aren't new wires.
+                for hole in covered:
+                    self.free.pop(hole, None)
+                continue
+            if any(h in owners for h in pins) or not covered & set(self.free):
+                continue
+            confidence = part.confidence * min((self.free[h].confidence for h in covered if h in self.free), default=1.0)
+            if part.kind == WIRE:
+                self._add(
+                    ObservationKind.ADDED, "wire", next(self._wire_ids), confidence,
+                    after=dict(part.pins), uncertain_holes=list(part.uncertain),
+                )  # fmt: skip
+            else:
+                obj_id = _new_id(_ID_PREFIX.get(part.kind, "part"), used)
+                used.add(obj_id)
+                self._add(
+                    ObservationKind.ADDED, "component", obj_id, confidence, after=dict(part.pins),
+                    uncertain_holes=list(part.uncertain), suggested=Suggestion(type=ComponentType(part.kind)),
+                )  # fmt: skip
+            for hole in covered:
+                self.free.pop(hole, None)
+            # Changed holes right next to a recognized part are its edge or shadow, not new wires.
+            for hole in [h for h in self.free if any(_distance(h, c) <= NEXT_TO_PART_PITCH for c in covered)]:
+                del self.free[hole]
+
     def _new_esp32s(self) -> None:
         used = {c.id for c in self.circuit.components}
         for pins, block in find_esp32s(set(self.free), self.template):
@@ -321,9 +382,15 @@ class _Pairer:
                 )  # fmt: skip
 
 
-def observations_from_occupancy(circuit: Circuit, changes: list[HoleChange]) -> list[Observation]:
-    """Explain a scan's hole changes relative to the last accepted `circuit`."""
-    return _Pairer(circuit, changes).run()
+def observations_from_occupancy(
+    circuit: Circuit, changes: list[HoleChange], parts: list[PartGuess] = ()
+) -> list[Observation]:
+    """Explain a scan's hole changes relative to the last accepted `circuit`.
+
+    `parts` are objects the camera recognized; each new one becomes a single observation before
+    the remaining holes are paired up.
+    """
+    return _Pairer(circuit, changes, list(parts)).run()
 
 
 def hole_changes_between(old: Circuit, new: Circuit) -> list[HoleChange]:

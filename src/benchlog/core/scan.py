@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from benchlog.core.board import TEMPLATES
 from benchlog.core.models import Circuit, Hole, Observation
 from benchlog.core.netlist import natural_key
+from benchlog.core.recognize import PartGuess
 from benchlog.core.pairing import HoleChange, explained_by_footprints, observations_from_occupancy, occupied_holes
 
 
@@ -41,6 +42,7 @@ class BoardReading(BaseModel):
     confidence: float = Field(default=1.0, ge=0, le=1)
     warnings: list[str] = []
     source: str = Field(description="Where the reading came from, e.g. 'camera 0', 'image photo.jpg'.")
+    parts: list[PartGuess] = Field(default=[], description="Objects the camera recognized (wires, resistors, ...).")
     taken_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
 
@@ -117,9 +119,10 @@ def scan(circuit: Circuit, store: ScanStore, reading: BoardReading, pending: lis
     changes = changes_between(reference, reading)
     # A recognized part (an ESP32 covers ~120 holes) is one change, not a flood of them.
     explained = explained_by_footprints({c.hole for c in changes if c.change == "filled"}, TEMPLATES[circuit.board])
+    explained |= {h for part in reading.parts for h in part.claims}
     unexplained = [c for c in changes if c.hole not in explained]
     if len(unexplained) > MAX_PLAUSIBLE_HOLE_CHANGES:
         raise MisreadError(len(unexplained))  # before saving, so a misread never becomes the reference
-    observations = observations_from_occupancy(circuit, changes)
+    observations = observations_from_occupancy(circuit, changes, reading.parts)
     store.save_latest(reading)
     return observations
