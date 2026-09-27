@@ -370,6 +370,47 @@
   font-size: 0.9rem;
 }
 
+/* Open any public repo by name */
+.explore-open {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.explore-open input {
+  flex: 1 1 260px;
+  min-width: 0;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 0.55rem 0.75rem;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.explore-open input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.explore-open-error {
+  margin: -0.75rem 0 0;
+  font-size: 0.8rem;
+  color: var(--bad);
+}
+
+.explore-section {
+  margin: 0 0 -0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
 /* In the Explore screen, .explore-grid is a button grid, not the old list */
 .explore-root .explore-grid {
   list-style: none;

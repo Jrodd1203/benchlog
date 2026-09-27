@@ -301,36 +301,105 @@ function describeChanges(prev: Circuit, curr: Circuit): { lines: string[]; elect
 
 import type { RemoteCommit } from './types'
 
+// GitHub allows ~60 unauthenticated API requests an hour per IP, and a demo room shares one IP.
+// So: circuits are cached for good (a commit's file never changes), commit lists are reused for a
+// couple of minutes and then revalidated with an ETag (an unchanged 304 doesn't count against the
+// limit), and if the limit is hit anyway the last saved list is shown instead of an error.
+
+const EXPLORE_CACHE = 'benchlog:explore:'
+const HISTORY_FRESH_MS = 2 * 60 * 1000
+
+interface CachedHistory {
+  at: number
+  etag: string | null
+  commits: RemoteCommit[]
+}
+
+function readCache<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(EXPLORE_CACHE + key)
+    return raw ? (JSON.parse(raw) as T) : null
+  } catch {
+    return null // storage unavailable (private window): just fetch
+  }
+}
+
+function writeCache(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(EXPLORE_CACHE + key, JSON.stringify(value))
+  } catch {
+    // storage full or unavailable: caching is best-effort
+  }
+}
+
+/** "owner/repo", "github.com/owner/repo" or a full GitHub URL (with or without .git or a path). */
+export function parseRepo(input: string): { owner: string; repo: string } | null {
+  const text = input.trim().replace(/^https?:\/\//, '').replace(/^(www\.)?github\.com\//, '')
+  const m = /^([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?(?:[/?#].*)?$/.exec(text)
+  return m ? { owner: m[1], repo: m[2] } : null
+}
+
+function rateLimitMessage(res: Response): string {
+  const reset = Number(res.headers.get('x-ratelimit-reset'))
+  const when = reset ? ` after ${new Date(reset * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ' in a while'
+  return `GitHub's limit for anonymous requests was reached. Try again${when}.`
+}
+
 /**
  * Commits that touched benchlog/circuit.json in a public repo, newest first.
- * Throws a user-readable message on rate-limit (403) or not-found (404).
+ * Throws a user-readable message on rate-limit (403/429, with nothing cached) or not-found (404).
  */
 export async function fetchRemoteHistory(owner: string, repo: string): Promise<RemoteCommit[]> {
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/commits?path=benchlog%2Fcircuit.json&per_page=100`,
-    { headers: { Accept: 'application/vnd.github.v3+json' } },
-  )
-  if (res.status === 403) throw new Error('GitHub rate limit reached — try again in an hour.')
-  if (res.status === 404) throw new Error('Repository not found or circuit.json not committed yet.')
+  const key = `history:${owner}/${repo}`.toLowerCase()
+  const cached = readCache<CachedHistory>(key)
+  if (cached && Date.now() - cached.at < HISTORY_FRESH_MS) return cached.commits
+
+  const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
+  if (cached?.etag) headers['If-None-Match'] = cached.etag
+  let res: Response
+  try {
+    res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/commits?path=benchlog%2Fcircuit.json&per_page=100`,
+      { headers },
+    )
+  } catch (err) {
+    if (cached) return cached.commits // offline: last saved copy
+    throw err
+  }
+  if (res.status === 304 && cached) {
+    writeCache(key, { ...cached, at: Date.now() })
+    return cached.commits
+  }
+  if (res.status === 403 || res.status === 429) {
+    if (cached) return cached.commits
+    throw new Error(rateLimitMessage(res))
+  }
+  if (res.status === 404) throw new Error('Repository not found (it must be public), or circuit.json isn’t committed yet.')
   if (!res.ok) throw new Error(`GitHub API error (${res.status})`)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data = (await res.json()) as any[]
-  return data.map((c) => ({
+  const commits = data.map((c) => ({
     sha: c.sha as string,
     shortSha: (c.sha as string).slice(0, 7),
     message: (c.commit.message as string).split('\n')[0],
     author: c.commit.author.name as string,
     date: c.commit.author.date as string,
   }))
+  writeCache(key, { at: Date.now(), etag: res.headers.get('etag'), commits } satisfies CachedHistory)
+  return commits
 }
 
-/** circuit.json at a specific commit SHA from a public repo. Returns null on any failure. */
 export async function fetchRemoteCircuitAt(owner: string, repo: string, sha: string): Promise<Circuit | null> {
+  // A commit's circuit never changes, so once fetched it's kept for good.
+  const key = `circuit:${owner}/${repo}@${sha}`.toLowerCase()
+  const cached = readCache<Circuit>(key)
+  if (cached) return cached
   try {
     const res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${sha}/benchlog/circuit.json`)
     if (!res.ok) return null
     const data = await res.json()
     if (!data || typeof data !== 'object' || !('wires' in data) || !('components' in data)) return null
+    writeCache(key, data)
     return data as Circuit
   } catch {
     return null
