@@ -85,7 +85,7 @@ def test_esp32_confirms_the_camera(project: Project, ground_gpio18: Path, monkey
     run("serial", "use", "/dev/fake")
     out = run("scan", "--simulate", str(ground_gpio18))
     assert "serial: ESP32 on /dev/fake" in out
-    assert "added wire w7: J7, R-30" in out and "ESP32 confirms (GPIO18)" in out
+    assert "added wire w7: a=J7 b=R-30" in out and "ESP32 confirms (GPIO18)" in out
     # Saved, so review shows it too.
     assert "ESP32 confirms (GPIO18)" in run("review")
     assert project.reconciliation().proposals[0].verdict == "confirmed"

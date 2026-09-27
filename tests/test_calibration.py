@@ -228,7 +228,7 @@ def test_scan_uses_the_calibration(cal: cal_mod.Calibration, tmp_path: Path, mon
 
     result = CliRunner(env={"COLUMNS": "200"}).invoke(app, ["scan"])
     assert result.exit_code == 0, result.output
-    assert "added wire" in result.output and "A40, A45" in result.output
+    assert "added wire" in result.output and "a=A40 b=A45" in result.output
     assert "no calibration saved" not in result.output
     # Stillness was judged on the calibrated board area, not a fresh (wobbly) detection.
     assert np.allclose(grabbed_with["corners"], cal.corners)

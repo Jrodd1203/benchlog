@@ -1,5 +1,14 @@
 """Known parts and their pinouts. Used to place a part without listing every pin by hand."""
 
+# Two-legged parts: pin names in the order a wire's ends a, b map onto them.
+TWO_LEGS = {
+    "resistor": ("1", "2"),
+    "led": ("anode", "cathode"),
+    "diode": ("anode", "cathode"),
+    "capacitor_ceramic": ("1", "2"),
+    "capacitor_electrolytic": ("+", "-"),
+}
+
 # DOIT ESP32 DevKit V1 (30 pins), antenna end up, USB end down, top to bottom.
 ESP32_DEVKIT_V1_30_LEFT = [
     "EN", "GPIO36", "GPIO39", "GPIO34", "GPIO35", "GPIO32", "GPIO33", "GPIO25",
@@ -23,3 +32,14 @@ def esp32_devkit_v1_30_pins(top_row: int, left_col: str = "B", right_col: str = 
     for i, name in enumerate(ESP32_DEVKIT_V1_30_RIGHT):
         pins[name] = f"{right_col}{top_row + i}"
     return pins
+
+
+# Every pin a known part has, so an edit can't give a resistor a third leg. Parts not listed
+# (I2C modules) take any pin names.
+PIN_NAMES: dict[str, tuple[str, ...]] = {
+    **TWO_LEGS,
+    "transistor_npn": ("E", "B", "C"),
+    "transistor_pnp": ("E", "B", "C"),
+    "potentiometer": ("1", "wiper", "3"),
+    "esp32_devkit_v1_30": (*ESP32_DEVKIT_V1_30_LEFT, *ESP32_DEVKIT_V1_30_RIGHT),
+}

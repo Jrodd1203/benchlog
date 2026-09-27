@@ -155,6 +155,16 @@ def test_every_proposal_gets_a_verdict():
     assert [v.observation_id for v in result.proposals] == ["obs1", "obs2", "obs3"]
 
 
+
+def test_removing_the_esp32_skips_the_check():
+    circuit = load("working")
+    esp32 = next(c for c in circuit.components if c.type == ComponentType.ESP32_DEVKIT_V1_30)
+    gone = Observation(id="obs1", kind=ObservationKind.REMOVED, object_type="component", object_id=esp32.id,
+                       before=esp32.pins, confidence=1)  # fmt: skip
+    result = reconcile(circuit, [gone, added("obs2", "w7", "J7", "R-7")], pins(), [])
+    assert [v.verdict for v in result.proposals] == ["not_checked", "not_checked"]
+    assert "removing esp32" in result.warnings[0]
+
 # ── Without proposals ─────────────────────────────────────────────────────────
 
 

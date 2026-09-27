@@ -120,13 +120,19 @@ def _describe_observation(o: Observation) -> str:
         holes = sorted(after.values(), key=natural_key)
         what = o.suggested.type.value if o.suggested and o.suggested.type else "unknown part (say what it is: type=...)"
         extras = ", ".join(x for x in (o.suggested.model, o.suggested.value) if x) if o.suggested else ""
-        where = f"{len(holes)} pins, {holes[0]}..{holes[-1]}" if len(holes) > 3 else ", ".join(holes)
+        # Few pins: name them, so an edit knows which leg is which (1=J21 2=J13).
+        where = f"{len(holes)} pins, {holes[0]}..{holes[-1]}" if len(holes) > 3 else " ".join(f"{k}={v}" for k, v in after.items())
         text = f"{o.id}  added component {o.object_id}: {what}{f' ({extras})' if extras else ''}, {where}  (confidence {o.confidence:.2f})"
         return text + (f"  check {', '.join(o.uncertain_holes)}" if o.uncertain_holes else "")
     if o.kind == ObservationKind.MOVED:
         detail = ", ".join(f"{k} {before.get(k, '-')} → {after.get(k, '-')}" for k in after if before.get(k) != after.get(k))
     else:
-        detail = ", ".join((after or before).values())
+        pins = after or before
+        if len(pins) > 3:  # an ESP32: 30 pins
+            holes = sorted(pins.values(), key=natural_key)
+            detail = f"{len(holes)} pins, {holes[0]}..{holes[-1]}"
+        else:
+            detail = " ".join(f"{k}={v}" for k, v in pins.items())  # a=J7 b=R-30: what an edit names
     text = f"{o.id}  {o.kind.value} {o.object_type} {o.object_id}: {detail}  (confidence {o.confidence:.2f})"
     if o.uncertain_holes:
         text += f"  check {', '.join(o.uncertain_holes)}"

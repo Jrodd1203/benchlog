@@ -25,8 +25,8 @@ from benchlog.core.board import TEMPLATES
 from benchlog.core.board_state import BoardStateStore, fingerprint
 from benchlog.core.checkpoints import CheckpointStore
 from benchlog.core.models import Circuit, ComponentType, Hole, Observation, ObservationKind, ObservationStatus, Suggestion
-from benchlog.core.pairing import apply_observations
-from benchlog.core.parts import esp32_devkit_v1_30_pins
+from benchlog.core.pairing import _ID_PREFIX, _new_id, apply_observations
+from benchlog.core.parts import PIN_NAMES, TWO_LEGS, esp32_devkit_v1_30_pins
 from benchlog.core.reconcile import Reconciliation, SerialReadings, reconcile, serial_record
 from benchlog.core.repo import Commit, GitError, Repo
 from benchlog.core.scan import BoardReading, MisreadError, ScanStore
@@ -53,6 +53,31 @@ class HardwareCheck(BaseModel):
     def trailer(self, forced: bool = False) -> str:
         """Git trailer recording the result in the commit message."""
         return f"ESP32-Check: {self.status}" + (" (forced)" if forced and self.status == "failed" else "")
+
+
+def _known_pins(obs: Observation, ends: dict[str, Hole], new_type: str | None) -> dict[str, Hole]:
+    """A component's pins after an edit, kept to the pins its kind of part has.
+
+    On a two-legged part, a and b (a wire's ends) mean its first and second leg. Changing to a
+    two-legged kind (an LED that's really a resistor) carries its two legs over in order.
+    """
+    old_type = obs.suggested.type.value if obs.suggested and obs.suggested.type else None
+    kind = new_type or old_type
+    names = PIN_NAMES.get(kind)
+    if names is None:  # unknown part: any pin names
+        return {**(obs.after or {}), **ends}
+    pins = dict(obs.after or {})
+    if kind in TWO_LEGS and len(pins) == 2 and set(pins) != set(names):
+        pins = dict(zip(names, pins.values()))  # legs named for another part (or none yet): keep them, in order
+    if kind in TWO_LEGS:
+        first, second = TWO_LEGS[kind]
+        ends = {{"a": first, "b": second}.get(k, k): v for k, v in ends.items()}
+    bad = [k for k in ends if k not in names]
+    if bad:
+        shown = ", ".join(names) if len(names) <= 3 else f"{names[0]}, {names[1]}, ..."
+        raise ProjectError(f"{obs.id}: a {kind} has no pin {', '.join(bad)} (its pins: {shown})")
+    # Anything else (a stray pin from an older edit) isn't a pin of this part.
+    return {k: v for k, v in {**pins, **ends}.items() if k in names}
 
 
 def _anchor_esp32(current: dict[str, Hole], given: dict[str, Hole], template) -> dict[str, Hole]:
@@ -319,9 +344,11 @@ class Project:
         ends, suggestion = ends or {}, suggestion or {}
         if obs.kind == ObservationKind.REMOVED:
             raise ProjectError(f"{obs_id}: a removal has nothing to edit; reject it if it's wrong")
+        if obs.object_type == "wire" and "type" in suggestion:
+            obs, ends = self._wire_to_component(obs, observations, ends, suggestion["type"])
         if obs.object_type == "wire":
             if suggestion:
-                raise ProjectError(f"{obs_id}: type, value and model are for components, not wires")
+                raise ProjectError(f"{obs_id}: a wire has no value or model; to make it a part, give its type=")
             bad_ends = set(ends) - {"a", "b"}
             if bad_ends:
                 raise ProjectError(f"{obs_id}: a wire's ends are 'a' and 'b', not {', '.join(sorted(bad_ends))}")
@@ -330,6 +357,8 @@ class Project:
         if bad_holes:
             raise ProjectError(f"not a hole on {template.id}: {', '.join(bad_holes)}")
         after = {**(obs.after or {}), **ends}
+        if obs.object_type == "component":
+            after = _known_pins(obs, ends, suggestion.get("type"))
         if obs.suggested and obs.suggested.type == ComponentType.ESP32_DEVKIT_V1_30 and ends:
             after = _anchor_esp32(obs.after or {}, ends, template)
         update: dict = {"after": after, "uncertain_holes": [], "confidence": 1.0}
@@ -349,6 +378,38 @@ class Project:
         edited = obs.model_copy(update=update)
         self.save_observations([edited if o.id == obs_id else o for o in observations])
         return edited
+
+    def _wire_to_component(
+        self, obs: Observation, observations: list[Observation], ends: dict[str, Hole], kind: str
+    ) -> tuple[Observation, dict[str, Hole]]:
+        """The camera took a part for a wire: the same observation as an added component.
+
+        A two-legged part keeps the wire's ends as its legs (a -> first pin, b -> second) unless
+        its pins are given; any other part needs all its pins given, e.g. E=, B=, C=.
+        """
+        if obs.kind != ObservationKind.ADDED:
+            raise ProjectError(f"{obs.id}: only a newly added wire can be turned into a part; reject it and scan again")
+        try:
+            ComponentType(kind)
+        except ValueError as e:
+            kinds = ", ".join(t.value for t in ComponentType)
+            raise ProjectError(f"{obs.id}: unknown component type {kind!r} (one of: {kinds})") from e
+        wire_ends = {k: v for k, v in (obs.after or {}).items() if k in ("a", "b")}
+        wire_ends.update({k: ends.pop(k) for k in ("a", "b") if k in ends})
+        if kind in TWO_LEGS:
+            first, second = TWO_LEGS[kind]
+            pins = {first: wire_ends.get("a"), second: wire_ends.get("b")}
+            pins = {**{k: v for k, v in pins.items() if v}, **ends}
+            missing = [p for p in (first, second) if p not in pins]
+            if missing:
+                raise ProjectError(f"{obs.id}: say where the {kind}'s {' and '.join(missing)} {'goes' if len(missing) == 1 else 'go'}, e.g. {missing[0]}=J2")
+        elif ends:
+            pins = dict(ends)
+        else:
+            raise ProjectError(f"{obs.id}: give the {kind}'s pins too (e.g. for a transistor: E=A1 B=A2 C=A3)")
+        used = {c.id for c in self.load_circuit().components} | {o.object_id for o in observations if o.object_type == "component"}
+        obj_id = _new_id(_ID_PREFIX.get(kind, "part"), used)
+        return obs.model_copy(update={"object_type": "component", "object_id": obj_id, "after": {}}), pins
 
     def history(self, limit: int | None = None) -> list[Commit]:
         """Commits that changed the circuit, newest first."""
