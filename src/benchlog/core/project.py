@@ -6,7 +6,11 @@
     .benchlog/config.json        gitignored: this workstation's settings, e.g. {"camera": 1}
     .benchlog/reconciliation.json  gitignored: the ESP32's verdicts on the pending observations
     .benchlog/baseline/          gitignored: empty-board capture from `benchlog.vision.capture`
-    .benchlog/scans/             gitignored: reference and latest board readings
+    .benchlog/scans/             gitignored: reference and latest board readings, and the serial
+                                 readings taken with the latest scan (serial.json)
+    .benchlog/board_state.json   gitignored: the last commit the physical board matched
+    .benchlog/prs/               gitignored: pull request pointers (see core/prs.py)
+    .benchlog/checks/            gitignored: check reports, one per commit
 """
 
 import json
@@ -17,9 +21,10 @@ from typing import Literal
 from pydantic import BaseModel, TypeAdapter
 
 from benchlog.core.board import TEMPLATES
+from benchlog.core.board_state import BoardStateStore, fingerprint
 from benchlog.core.models import Circuit, Hole, Observation, ObservationKind, ObservationStatus
 from benchlog.core.pairing import apply_observations
-from benchlog.core.reconcile import Reconciliation, reconcile
+from benchlog.core.reconcile import Reconciliation, SerialReadings, reconcile, serial_record
 from benchlog.core.repo import Commit, GitError, Repo
 from benchlog.core.scan import BoardReading, MisreadError, ScanStore
 from benchlog.core.scan import scan as run_scan
@@ -58,6 +63,9 @@ class Project:
         self.observations_path = repo.root / OBSERVATIONS_PATH
         self.scans = ScanStore(repo.root / STATE_DIR)
         self.calibration_dir = repo.root / CALIBRATION_DIR
+        self.state_dir = repo.root / STATE_DIR
+        self.board_state = BoardStateStore(self.state_dir)
+        self.serial_readings_path = self.scans.dir / "serial.json"
 
     @classmethod
     def find(cls, start: Path | None = None) -> "Project":
@@ -87,15 +95,33 @@ class Project:
             dump(Circuit(board=board), project.circuit_path)
             created.append(CIRCUIT_PATH.as_posix())
         (repo.root / STATE_DIR).mkdir(exist_ok=True)
+        if project.ensure_state_ignored():
+            created.append(f".gitignore entry {STATE_DIR.as_posix()}/")
+        return project, created
 
-        gitignore = repo.root / ".gitignore"
+    def ensure_state_ignored(self) -> bool:
+        """Add .benchlog/ to .gitignore if it isn't there. Returns True if it was added."""
+        gitignore = self.repo.root / ".gitignore"
         existing = gitignore.read_text() if gitignore.exists() else ""
         entry = f"{STATE_DIR.as_posix()}/"
-        if entry not in existing.splitlines():
-            prefix = "" if not existing or existing.endswith("\n") else "\n"
-            gitignore.write_text(f"{existing}{prefix}{entry}\n")
-            created.append(f".gitignore entry {entry}")
-        return project, created
+        if entry in existing.splitlines():
+            return False
+        prefix = "" if not existing or existing.endswith("\n") else "\n"
+        gitignore.write_text(f"{existing}{prefix}{entry}\n")
+        return True
+
+    def matches_head(self) -> bool:
+        """True if the working circuit is exactly the committed one."""
+        return self.repo.head() is not None and self.circuit_at("HEAD") == self.load_circuit()
+
+    def board_confirmed(self) -> None:
+        """Record that the physical board matches the working circuit right now."""
+        self.ensure_state_ignored()
+        self.board_state.set(self.repo.head() if self.matches_head() else None, self.load_circuit())
+
+    def board_matches_working(self) -> bool:
+        """True if the board was last confirmed to match exactly the working circuit."""
+        return self.board_state.load().circuit_fingerprint == fingerprint(self.load_circuit())
 
     def config(self) -> dict:
         path = self.repo.root / CONFIG_PATH
@@ -138,22 +164,27 @@ class Project:
     def pending_observations(self) -> list[Observation]:
         return [o for o in self.observations() if o.status == ObservationStatus.PENDING]
 
-    def scan(self, reading: BoardReading, sync: bool = False) -> list[Observation]:
+    def scan(self, reading: BoardReading, sync: bool = False, serial: SerialReadings | None = None) -> list[Observation]:
         """Record a board reading and save the changes it implies as pending observations.
 
         With `sync`, the reading becomes the reference (the board matches the circuit) and
-        nothing is proposed.
+        nothing is proposed. `serial` is what the ESP32 agent read during the scan; it is kept
+        until the proposals are accepted, then saved into the circuit.
         """
+        self._keep_serial_readings(serial)
         if sync:
             self.scans.save_latest(reading)
             self.scans.promote_latest()
             self.save_observations([])
+            self.board_confirmed()
             return []
         try:
             observations = run_scan(self.load_circuit(), self.scans, reading, self.pending_observations())
         except MisreadError as e:
             raise ProjectError(str(e)) from e
         self.save_observations(observations)
+        if not observations:
+            self.board_confirmed()  # a clean scan: the board matches the circuit
         return observations
 
     def check_with_serial(
@@ -193,19 +224,47 @@ class Project:
         self.save_observations([updated.get(o.id, o) for o in observations])
         return list(updated.values())
 
+    def _keep_serial_readings(self, readings: SerialReadings | None) -> None:
+        if readings is None:
+            self.serial_readings_path.unlink(missing_ok=True)  # never pair old readings with a new scan
+            return
+        self.serial_readings_path.parent.mkdir(parents=True, exist_ok=True)
+        self.serial_readings_path.write_text(readings.model_dump_json(indent=2) + "\n")
+
+    def serial_readings(self) -> SerialReadings | None:
+        """The serial readings taken with the latest scan, if any."""
+        path = self.serial_readings_path
+        return SerialReadings.model_validate_json(path.read_text()) if path.exists() else None
+
     def accept_observations(self, ids: list[str] | None = None) -> list[Observation]:
-        """Apply pending observations to the circuit. All or nothing: if one can't be applied, none are."""
+        """Apply pending observations to the circuit. All or nothing: if one can't be applied, none are.
+
+        If the scan had serial readings, their verdicts for the resulting circuit are saved in
+        `circuit.serial`, so they are committed with it.
+        """
         observations, chosen = self._select_pending(ids)
         try:
             circuit = apply_observations(self.load_circuit(), chosen)
         except ValueError as e:
             raise ProjectError(str(e)) from e
+        readings = self.serial_readings()
+        if readings is not None:
+            circuit = circuit.model_copy(update={"serial": serial_record(circuit, readings)})
         self.save_circuit(circuit)
-        return self._set_status(observations, chosen, ObservationStatus.ACCEPTED)
+        accepted = self._set_status(observations, chosen, ObservationStatus.ACCEPTED)
+        self._reviewed()
+        return accepted
 
     def reject_observations(self, ids: list[str] | None = None) -> list[Observation]:
         observations, chosen = self._select_pending(ids)
-        return self._set_status(observations, chosen, ObservationStatus.REJECTED)
+        rejected = self._set_status(observations, chosen, ObservationStatus.REJECTED)
+        self._reviewed()
+        return rejected
+
+    def _reviewed(self) -> None:
+        """Once every scan proposal is reviewed, the working circuit describes the board."""
+        if not self.pending_observations():
+            self.board_confirmed()
 
     def edit_observation(self, obs_id: str, ends: dict[str, Hole]) -> Observation:
         """Set or correct wire ends of a pending added/moved wire, e.g. {"b": "J40"}.
@@ -235,7 +294,11 @@ class Project:
         self.repo.add(self.circuit_path, *firmware)
         if not self.repo.has_staged_changes():
             raise ProjectError("nothing to commit: the circuit and firmware match HEAD")
-        return self.repo.commit(f"{message}\n\n{trailer}" if trailer else message)
+        board_matched = self.board_matches_working()
+        commit = self.repo.commit(f"{message}\n\n{trailer}" if trailer else message)
+        if board_matched:
+            self.board_confirmed()  # the board matched what was just committed
+        return commit
 
     def hardware_check(self, pins: dict[int, str] | None, i2c_devices: list[str] | None, reason: str | None = None) -> HardwareCheck:
         """Check the working circuit against what the ESP32 sensed (None: no reading, so skipped).

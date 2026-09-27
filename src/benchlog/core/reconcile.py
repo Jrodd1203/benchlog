@@ -15,7 +15,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from benchlog.core.board import TEMPLATES
-from benchlog.core.models import Circuit, ComponentType, Observation
+from benchlog.core.board_state import fingerprint
+from benchlog.core.models import Circuit, ComponentType, Observation, SerialI2cResult, SerialPinResult, SerialRecord
 from benchlog.core.netlist import Netlist, netlist
 from benchlog.core.pairing import apply_observations
 
@@ -279,3 +280,30 @@ def reconcile(
         warnings=warnings,
         serial_checked=pins is not None,
     )
+
+
+# ── Saving results with the circuit ───────────────────────────────────────────
+
+
+class SerialReadings(BaseModel):
+    """The raw readings of one serial snapshot, kept with a scan until its proposals are reviewed."""
+
+    probed_at: str
+    port: str | None = None
+    agent: str | None = None
+    pins: dict[int, str]
+    i2c: list[str] | None = None
+
+
+def serial_record(circuit: Circuit, readings: SerialReadings) -> SerialRecord:
+    """Serial verdicts for exactly `circuit`, to be saved (and committed) with it."""
+    result = reconcile(circuit, [], readings.pins, readings.i2c)
+    return SerialRecord(
+        probed_at=readings.probed_at, port=readings.port, agent=readings.agent, wiring=fingerprint(circuit),
+        pins=[
+            SerialPinResult(gpio=p.gpio, expected=p.expected, actual=p.actual, verdict=p.verdict, message=p.message)
+            for p in result.pins
+        ],
+        i2c=[SerialI2cResult(address=c.address, component=c.component, status=c.status) for c in result.i2c]
+        if readings.i2c is not None else None,
+    )  # fmt: skip

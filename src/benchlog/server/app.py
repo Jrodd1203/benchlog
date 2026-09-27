@@ -5,24 +5,30 @@ behave the same. Run it from inside a project with `benchlog serve`, or point it
 the BENCHLOG_PROJECT environment variable.
 """
 
-import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from benchlog.camera import read_board
 from benchlog.core.diff import CircuitDiff, describe, diff
 from benchlog.core.models import Circuit, Hole, Observation
 from benchlog.core.netlist import Netlist, netlist
 from benchlog.core.project import HardwareCheck, Project, ProjectError
-from benchlog.core.reconcile import Reconciliation
+from benchlog.core.prs import PRNotFound
+from benchlog.core.reconcile import Reconciliation, SerialReadings
 from benchlog.core.repo import Commit, GitError
 from benchlog.core.scan import reading_from_circuit
 from benchlog.serial.service import SerialSnapshot
+from benchlog.server.branch_routes import router as branch_router
+from benchlog.server.check_routes import router as check_router
+from benchlog.server.pr_routes import not_found as pr_not_found
+from benchlog.server.pr_routes import router as pr_router
+from benchlog.server.deps import PROJECTS_ROOT, ProjectDep
 from benchlog.server.serial_routes import router as serial_router
 from benchlog.server.serial_routes import serial_service
 
@@ -36,6 +42,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="benchlog", lifespan=lifespan)
 app.include_router(serial_router)
+app.include_router(check_router)
+app.include_router(branch_router)
+app.include_router(pr_router)
+app.add_exception_handler(PRNotFound, pr_not_found)
 
 
 @app.exception_handler(ProjectError)
@@ -44,12 +54,36 @@ async def _user_error(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
-def get_project() -> Project:
-    start = os.environ.get("BENCHLOG_PROJECT")
-    return Project.find(Path(start) if start else None)
+
+# Where the web UI's "New project" creates folders, one benchlog project (git repo) per
+# subdirectory — the same layout `cd somewhere && benchlog init` produces, just automated.
+# `benchlog serve` normally runs inside a single project (see get_project above); this is a
+# separate, lightweight registry of projects the UI can list and create.
 
 
-ProjectDep = Annotated[Project, Depends(get_project)]
+# Reserved on Windows regardless of extension; mkdir raises an unhandled OSError for these.
+_WINDOWS_RESERVED = {
+    "con", "prn", "aux", "nul",
+    *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10)),
+}  # fmt: skip
+
+
+def _slugify(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    if not slug or slug in _WINDOWS_RESERVED:
+        slug = f"project-{slug}" if slug else "project"
+    return slug
+
+
+def _unique_project_dir(root: Path, slug: str) -> Path:
+    """A `root / slug(-N)` that doesn't exist yet. Best-effort: `create_project` still handles
+    the rare race where another request claims it between this check and `mkdir`."""
+    path = root / slug
+    n = 2
+    while path.exists():
+        path = root / f"{slug}-{n}"
+        n += 1
+    return path
 
 
 def _circuit_at(project: Project, rev: str) -> Circuit:
@@ -122,9 +156,38 @@ class CommitResponse(BaseModel):
     changes: DiffResponse
 
 
+class ProjectSummary(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(description="Folder name under PROJECTS_ROOT; stable, used to reopen the project.")
+    name: str
+    board: str
+    updated: str | None = Field(default=None, description="ISO 8601 date of the last commit, if any.")
+    setup_complete: bool = Field(alias="setupComplete")
+
+
+class CreateProjectRequest(BaseModel):
+    name: str = Field(min_length=1)
+    board: str = "bb830"
+
+
 def _diff_response(old: Circuit, new: Circuit) -> DiffResponse:
     d = diff(old, new)
     return DiffResponse(diff=d, lines=describe(d))
+
+
+def _project_summary(project: Project) -> ProjectSummary:
+    head = project.repo.log(limit=1)
+    # No explicit "setup done" flag exists yet (see SetupScreen's steps); a saved calibration
+    # is the closest signal that someone has been through setup rather than just `init`.
+    calibrated = project.calibration_dir.exists() and any(project.calibration_dir.iterdir())
+    return ProjectSummary(
+        id=project.repo.root.name,
+        name=project.config().get("name", project.repo.root.name),
+        board=project.load_circuit().board,
+        updated=head[0].date if head else None,
+        setupComplete=calibrated,
+    )
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -145,6 +208,44 @@ def status(project: ProjectDep) -> StatusResponse:
         changes=_diff_response(project.baseline(), project.load_circuit()),
         pending=len(project.pending_observations()),
     )
+
+
+@app.get("/api/projects")
+def list_projects() -> list[ProjectSummary]:
+    """Every benchlog project under PROJECTS_ROOT (one folder + git repo each)."""
+    if not PROJECTS_ROOT.exists():
+        return []
+    summaries = []
+    for child in sorted(PROJECTS_ROOT.iterdir()):
+        if not child.is_dir():
+            continue
+        try:
+            summaries.append(_project_summary(Project.find(child)))
+        except ProjectError:
+            continue  # not a benchlog project (e.g. `git init` without `benchlog init`)
+    return summaries
+
+
+@app.post("/api/projects")
+def create_project(request: CreateProjectRequest) -> ProjectSummary:
+    """Create a new project folder + git repo under PROJECTS_ROOT, same layout as `benchlog init`."""
+    slug = _slugify(request.name)
+    # Make the directory ourselves first: Repo.find (tried before Repo.init) runs `git` with this
+    # path as its cwd, and a nonexistent cwd raises a raw OSError on Windows instead of the GitError
+    # Project.init expects. mkdir without exist_ok so two concurrent requests can't both "win" the
+    # same slug; retry with the next suffix on that race instead of a raw 500.
+    for _ in range(10):
+        path = _unique_project_dir(PROJECTS_ROOT, slug)
+        try:
+            path.mkdir(parents=True)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise ProjectError(f"could not find a free folder name for {request.name!r}")
+    project, _created = Project.init(path, board=request.board)
+    project.set_config("name", request.name)
+    return _project_summary(project)
 
 
 @app.get("/api/circuit")
@@ -203,7 +304,13 @@ def scan(request: ScanRequest, project: ProjectDep, http: Request) -> ScanRespon
             project.camera_index(request.camera), Path(request.image) if request.image else None, project.calibration_dir
         )
     serial = serial_service(http.app).snapshot()  # None when no agent is connected
-    observations = project.scan(reading, sync=request.sync)
+    readings = None
+    if serial is not None:
+        readings = SerialReadings(
+            probed_at=serial.probe.taken_at, port=serial.port, agent=serial.agent,
+            pins=serial.probe.pins, i2c=serial.i2c.devices,
+        )  # fmt: skip
+    observations = project.scan(reading, sync=request.sync, serial=readings)
     check = project.check_with_serial(
         observations, serial.probe.pins if serial else None, serial.i2c.devices if serial else None
     )

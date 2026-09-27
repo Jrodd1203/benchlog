@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import './App.css'
+import { setActiveProject } from './api'
 import { CommitsScreen } from './screens/CommitsScreen'
 import { DiffScreen } from './screens/DiffScreen'
 import { ProjectsScreen } from './screens/ProjectsScreen'
@@ -27,13 +28,20 @@ export default function App() {
 
   const open = (p: ProjectSummary) => {
     setProject(p)
+    setActiveProject(p.id)
     setScreen(p.setupComplete ? 'workspace' : 'setup')
+  }
+
+  const backToProjects = () => {
+    setActiveProject(null)
+    setProject(null)
+    setScreen('projects')
   }
 
   return (
     <div className="app" data-screen={screen}>
       <nav className="topbar">
-        <button type="button" className="brand" onClick={() => setScreen('projects')}>
+        <button type="button" className="brand" onClick={backToProjects}>
           benchlog
         </button>
         {project && screen !== 'projects' && (

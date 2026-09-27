@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { getCircuitAt, getTimeline, listProjects } from '../api'
+import { createProject, getCircuitAt, getTimeline, listProjects } from '../api'
 import { Breadboard } from '../board/Breadboard'
-import { FutureButton } from '../components/FutureButton'
+import { NewProjectModal } from '../components/NewProjectModal'
 import type { Circuit, ProjectSummary, TimelineEntry } from '../types'
 
 type WorkflowTab = 'scan' | 'review' | 'commit' | 'check'
@@ -136,6 +136,7 @@ function CommandsSection() {
 /** Requirement 1 (landing page): what benchlog is, then the local projects to open. */
 export function ProjectsScreen({ onOpen }: { onOpen: (p: ProjectSummary) => void }) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
+  const [creating, setCreating] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -146,6 +147,12 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: ProjectSummary) => void
       alive = false
     }
   }, [])
+
+  async function handleCreate(input: { name: string; board: string }) {
+    const project = await createProject(input)
+    setProjects((prev) => [...(prev ?? []), project])
+    setCreating(false)
+  }
 
   return (
     <main className="page">
@@ -172,10 +179,12 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: ProjectSummary) => void
 
       <div className="section-label">
         <h2>Projects</h2>
-        <FutureButton primary needs="POST /api/projects (create a project folder + git repo)">
+        <button type="button" className="btn primary" onClick={() => setCreating(true)}>
           New project
-        </FutureButton>
+        </button>
       </div>
+
+      {creating && <NewProjectModal onCreate={handleCreate} onClose={() => setCreating(false)} />}
 
       {projects === null ? (
         <p className="muted">Loading…</p>
@@ -194,10 +203,6 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: ProjectSummary) => void
           ))}
         </ul>
       )}
-
-      <div className="row">
-        <FutureButton needs="a folder picker + POST /api/projects/open">Open existing folder…</FutureButton>
-      </div>
     </main>
   )
 }

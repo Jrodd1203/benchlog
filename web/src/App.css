@@ -441,13 +441,52 @@
   color: var(--muted);
 }
 
-select {
+select,
+.field input {
   font: inherit;
   padding: 0.4rem 0.6rem;
   border-radius: var(--radius);
   border: 1px solid var(--rule);
   background: var(--surface);
   color: var(--text);
+}
+
+.field input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ── Modal ─────────────────────────────────────────────────────────────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 100;
+}
+
+.modal {
+  width: 100%;
+  max-width: 380px;
+}
+
+.modal h2 {
+  margin: 0 0 1.1rem;
+}
+
+.modal .field {
+  max-width: none;
+  margin-bottom: 1rem;
+}
+
+.note.bad {
+  color: var(--bad);
+  border-left-color: var(--bad);
 }
 
 .table {
