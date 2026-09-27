@@ -11,6 +11,7 @@ from typing import Callable
 
 from pydantic import BaseModel, Field
 
+from benchlog.core.reconcile import SerialReadings
 from benchlog.serial.agent_client import AgentClient, AgentDisconnected, AgentError, I2cResult, ProbeResult
 
 PING_INTERVAL = 5.0
@@ -37,6 +38,12 @@ class SerialSnapshot(BaseModel):
     agent: str | None
     probe: ProbeResult
     i2c: I2cResult
+
+    def readings(self) -> SerialReadings:
+        """The raw readings, as the core saves them with a scan."""
+        return SerialReadings(
+            probed_at=self.probe.taken_at, port=self.port, agent=self.agent, pins=self.probe.pins, i2c=self.i2c.devices
+        )
 
 
 def available_ports() -> list[PortInfo]:

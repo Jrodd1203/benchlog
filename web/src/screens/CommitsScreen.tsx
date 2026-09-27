@@ -33,12 +33,16 @@ export function CommitsScreen({ onReview, onTimeline }: { onReview: () => void; 
   const changes = status?.changes.lines ?? []
   const canCommit = !busy && message.trim().length > 0 && changes.length > 0
 
-  const submit = async (e: FormEvent) => {
+  // The server refuses to commit when the ESP32 says the board doesn't match; the user may override.
+  const espFailed = error?.startsWith('ESP32 check failed') ?? false
+
+  const submit = async (e: FormEvent, force = false) => {
     e.preventDefault()
     if (!canCommit) return
     setBusy(true)
     try {
-      const res = await commit(message.trim())
+      const res = await commit(message.trim(), force)
+      setError(null)
       setMade(res.commit)
       setMessage('')
       await load()
@@ -72,6 +76,14 @@ export function CommitsScreen({ onReview, onTimeline }: { onReview: () => void; 
       {error && (
         <p className="notice error" role="alert">
           {error}
+        </p>
+      )}
+      {espFailed && (
+        <p className="row tight">
+          <button type="button" className="btn" disabled={!canCommit} onClick={(e) => submit(e, true)}>
+            Commit anyway
+          </button>
+          <span className="muted small">The commit records “ESP32-Check: failed (forced)”.</span>
         </p>
       )}
       {made && (

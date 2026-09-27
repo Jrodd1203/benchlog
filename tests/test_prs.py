@@ -300,3 +300,17 @@ def test_api_pr_flow(project: Project, client):
     assert client.post("/api/prs/1/merge").status_code == 400
     assert [p["status"] for p in client.get("/api/prs").json()] == ["merged"]
     assert client.get("/api/prs/9").status_code == 404
+
+
+def test_routes_follow_the_project_query_param(project: Project, client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The web UI sends ?project=<id>; branch, PR and check routes must use that project too."""
+    from benchlog.server import deps
+
+    monkeypatch.setattr(deps, "PROJECTS_ROOT", project.repo.root.parent)
+    monkeypatch.delenv("BENCHLOG_PROJECT")
+    monkeypatch.chdir(tmp_path)  # not inside any project
+    params = {"project": project.repo.root.name}
+    assert [b["name"] for b in client.get("/api/branches", params=params).json()] == ["feature", "main"]
+    assert client.post("/api/prs", params=params, json={"title": "Move the pot"}).status_code == 200
+    assert client.post("/api/checks/run", params=params).json()["status"] == "fail"
+    assert client.get("/api/board-state", params=params).status_code == 200

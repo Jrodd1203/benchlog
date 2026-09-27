@@ -1,0 +1,91 @@
+/* Checks and Branches & PRs screens. Kept out of App.css so those screens can change independently. */
+
+.badge.warn {
+  color: var(--warn);
+}
+
+.badge.na {
+  color: var(--muted);
+  border-style: dashed;
+}
+
+.check-results tr.selectable {
+  cursor: pointer;
+}
+
+.check-results tr.selected td {
+  background: var(--accent-soft);
+}
+
+.check-results td.ids {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.guide {
+  margin: 0.5rem 0 0;
+  padding-left: 1.4rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.guide li.optional {
+  color: var(--muted);
+}
+
+.stack {
+  display: grid;
+  gap: 1.2rem;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.2rem;
+}
+
+@media (max-width: 900px) {
+  .split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.board-pair {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.board-pair figure {
+  margin: 0;
+}
+
+.board-pair figcaption {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+
+.note-list {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: end;
+}
+
+tr.current td:first-child {
+  font-weight: 600;
+}
+
+tr.selectable {
+  cursor: pointer;
+}
+
+tr.selected td {
+  background: var(--accent-soft);
+}

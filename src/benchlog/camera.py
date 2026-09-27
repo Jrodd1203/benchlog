@@ -42,11 +42,17 @@ def reading_from_frame(frame, source: str, calibration=None) -> BoardReading:
         except CalibrationError as e:
             raise ProjectError(str(e)) from e
         occupancy = classify(calibration, frame, tracking)
+        from benchlog.vision.calibration import PATCH_RADIUS_PITCH, hole_pitch_px
+        from benchlog.vision.colors import hole_colors
+
+        radius = max(2, round(PATCH_RADIUS_PITCH * hole_pitch_px(calibration.holes)))
+        colors = hole_colors(frame, tracking.apply(calibration.holes), occupancy.occupied, radius)
         warnings = []
         if tracking.shift_px > 3:
             warnings.append(f"board moved {tracking.shift_px:.0f} px / {tracking.rotation_deg:.1f}° since calibration (tracked)")
         return BoardReading(
             occupied=sorted(occupancy.occupied),
+            colors=colors,
             confidence=round(min(1.0, tracking.correlation), 3),
             warnings=warnings,
             source=source,

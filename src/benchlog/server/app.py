@@ -20,17 +20,17 @@ from benchlog.core.models import Circuit, Hole, Observation
 from benchlog.core.netlist import Netlist, netlist
 from benchlog.core.project import HardwareCheck, Project, ProjectError
 from benchlog.core.prs import PRNotFound
-from benchlog.core.reconcile import Reconciliation, SerialReadings
+from benchlog.core.reconcile import Reconciliation
 from benchlog.core.repo import Commit, GitError
 from benchlog.core.scan import reading_from_circuit
 from benchlog.serial.service import SerialSnapshot
 from benchlog.server.branch_routes import router as branch_router
 from benchlog.server.check_routes import router as check_router
+from benchlog.server.deps import PROJECTS_ROOT, ProjectDep
 from benchlog.server.pr_routes import not_found as pr_not_found
 from benchlog.server.pr_routes import router as pr_router
-from benchlog.server.deps import PROJECTS_ROOT, ProjectDep
 from benchlog.server.serial_routes import router as serial_router
-from benchlog.server.serial_routes import serial_service
+from benchlog.server.serial_routes import serial_service, snapshot_for
 
 
 @asynccontextmanager
@@ -52,13 +52,6 @@ app.add_exception_handler(PRNotFound, pr_not_found)
 @app.exception_handler(GitError)
 async def _user_error(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
-
-
-
-# Where the web UI's "New project" creates folders, one benchlog project (git repo) per
-# subdirectory — the same layout `cd somewhere && benchlog init` produces, just automated.
-# `benchlog serve` normally runs inside a single project (see get_project above); this is a
-# separate, lightweight registry of projects the UI can list and create.
 
 
 # Reserved on Windows regardless of extension; mkdir raises an unhandled OSError for these.
@@ -140,8 +133,17 @@ class AcceptResponse(BaseModel):
     changes: DiffResponse = Field(description="What accepting changed in the working circuit.")
 
 
+class SuggestionEdit(BaseModel):
+    type: str | None = Field(default=None, description="Component type, e.g. 'resistor'.")
+    value: str | None = Field(default=None, description="e.g. '220Ω', '100nF', 'red'.")
+    model: str | None = Field(default=None, description="Part number, e.g. '2N2222', 'BME280'.")
+
+
 class EditRequest(BaseModel):
-    ends: dict[str, Hole] = Field(description='Wire ends to set, e.g. {"b": "J45"}.')
+    ends: dict[str, Hole] = Field(
+        default={}, description='Wire ends ({"b": "J45"}) or component pins ({"anode": "E18"}) to set.'
+    )
+    suggested: SuggestionEdit | None = Field(default=None, description="For a component: what it is.")
 
 
 class CommitRequest(BaseModel):
@@ -303,14 +305,8 @@ def scan(request: ScanRequest, project: ProjectDep, http: Request) -> ScanRespon
         reading = read_board(
             project.camera_index(request.camera), Path(request.image) if request.image else None, project.calibration_dir
         )
-    serial = serial_service(http.app).snapshot()  # None when no agent is connected
-    readings = None
-    if serial is not None:
-        readings = SerialReadings(
-            probed_at=serial.probe.taken_at, port=serial.port, agent=serial.agent,
-            pins=serial.probe.pins, i2c=serial.i2c.devices,
-        )  # fmt: skip
-    observations = project.scan(reading, sync=request.sync, serial=readings)
+    serial = snapshot_for(http.app, project)  # None when there's no ESP32 (connects if needed)
+    observations = project.scan(reading, sync=request.sync, serial=serial.readings() if serial else None)
     check = project.check_with_serial(
         observations, serial.probe.pins if serial else None, serial.i2c.devices if serial else None
     )
@@ -346,14 +342,15 @@ def reject(request: IdsRequest, project: ProjectDep) -> list[Observation]:
 
 @app.patch("/api/observations/{obs_id}")
 def edit(obs_id: str, request: EditRequest, project: ProjectDep) -> Observation:
-    """Set or correct a pending wire's ends before accepting it."""
-    return project.edit_observation(obs_id, {k: v.strip().upper() for k, v in request.ends.items()})
+    """Correct a pending observation before accepting it: wire ends, component pins, or what a part is."""
+    suggestion = request.suggested.model_dump(exclude_none=True) if request.suggested else None
+    return project.edit_observation(obs_id, {k: v.strip().upper() for k, v in request.ends.items()}, suggestion)
 
 
 @app.post("/api/commit")
 def commit(request: CommitRequest, project: ProjectDep, http: Request) -> CommitResponse:
     """Check the circuit against the board through the ESP32 first; a failure blocks unless `force`."""
-    serial = serial_service(http.app).snapshot()  # None when no agent is connected
+    serial = snapshot_for(http.app, project)  # None when there's no ESP32 (connects if needed)
     check = project.hardware_check(
         serial.probe.pins if serial else None,
         serial.i2c.devices if serial else None,
