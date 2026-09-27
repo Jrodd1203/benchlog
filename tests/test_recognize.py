@@ -175,3 +175,58 @@ def test_close_calls_between_two_holes_are_flagged() -> None:
     assert not holes.ambiguous((100, 102))  # right on G32
     assert holes.ambiguous((100, 108.6))  # 0.43 of a hole from G32, 0.57 from H32: can't tell
     assert not holes.ambiguous((100, 104))
+
+
+# ── Correcting a part the camera took for a wire ──────────────────────────────
+
+
+@pytest.fixture
+def wire_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Project:
+    path = tmp_path / "project"
+    Repo.init(path)
+    monkeypatch.chdir(path)
+    project, _ = Project.init(path)
+    project.save_observations([
+        Observation(id="obs1", kind="added", object_type="wire", object_id="w1", after={"a": "C26", "b": "C33"}, confidence=0.4),
+        Observation(id="obs2", kind="added", object_type="wire", object_id="w2", after={"a": "R-5"}, confidence=0.4),
+        Observation(id="obs3", kind="added", object_type="component", object_id="r1", after={"1": "A1", "2": "A5"},
+                    confidence=0.7, suggested={"type": "resistor"}),
+    ])  # fmt: skip
+    return project
+
+
+def test_a_wire_that_is_really_a_resistor(wire_project: Project) -> None:
+    edited = wire_project.edit_observation("obs1", suggestion={"type": "resistor", "value": "220Ω"})
+    assert (edited.object_type, edited.object_id, edited.after) == ("component", "r2", {"1": "C26", "2": "C33"})
+    assert (edited.suggested.type, edited.suggested.value) == (ComponentType.RESISTOR, "220Ω")
+    wire_project.accept_observations(["obs1"])
+    [r] = [c for c in wire_project.load_circuit().components if c.id == "r2"]
+    assert (r.type, r.value, r.pins) == (ComponentType.RESISTOR, "220Ω", {"1": "C26", "2": "C33"})
+    assert wire_project.load_circuit().wires == []
+
+
+def test_a_wire_that_is_really_an_led_with_a_missing_leg(wire_project: Project) -> None:
+    with pytest.raises(ProjectError, match="cathode goes"):
+        wire_project.edit_observation("obs2", suggestion={"type": "led"})
+    edited = wire_project.edit_observation("obs2", {"b": "J2"}, {"type": "led"})
+    assert (edited.object_id, edited.after) == ("led1", {"anode": "R-5", "cathode": "J2"})
+    # Pins can be named directly too (the band side of a diode, say).
+    edited = wire_project.edit_observation("obs1", {"cathode": "C26", "anode": "C33"}, {"type": "diode"})
+    assert edited.after == {"anode": "C33", "cathode": "C26"}
+
+
+def test_three_legged_parts_need_their_pins(wire_project: Project) -> None:
+    with pytest.raises(ProjectError, match="give the transistor_npn's pins"):
+        wire_project.edit_observation("obs1", suggestion={"type": "transistor_npn"})
+    edited = wire_project.edit_observation("obs1", {"E": "C26", "B": "C27", "C": "C28"}, {"type": "transistor_npn"})
+    assert (edited.object_id, edited.after) == ("q1", {"E": "C26", "B": "C27", "C": "C28"})
+    with pytest.raises(ProjectError, match="unknown component type"):
+        wire_project.edit_observation("obs2", suggestion={"type": "banana"})
+    with pytest.raises(ProjectError, match="no value or model"):
+        wire_project.edit_observation("obs2", suggestion={"value": "220Ω"})
+
+
+def test_wire_to_resistor_from_the_cli(wire_project: Project) -> None:
+    result = CliRunner(env={"COLUMNS": "200"}).invoke(app, ["review", "edit", "obs1", "type=resistor"])
+    assert result.exit_code == 0, result.output
+    assert "added component r2: resistor" in result.output

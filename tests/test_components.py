@@ -125,8 +125,8 @@ def test_edit_validation_for_components(project: Project) -> None:
         project.edit_observation("obs1", suggestion={"colour": "red"})
     wire = Observation(id="obs2", kind="added", object_type="wire", object_id="w1", after={"a": "A1", "b": "A5"}, confidence=1)
     project.save_observations([*project.observations(), wire])
-    with pytest.raises(ProjectError, match="for components, not wires"):
-        project.edit_observation("obs2", suggestion={"type": "resistor"})
+    with pytest.raises(ProjectError, match="no value or model"):
+        project.edit_observation("obs2", suggestion={"value": "220Ω"})  # a type would turn it into a part
 
 
 def test_api_edit_names_a_component(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:

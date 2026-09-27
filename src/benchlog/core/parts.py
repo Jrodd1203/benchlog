@@ -1,5 +1,14 @@
 """Known parts and their pinouts. Used to place a part without listing every pin by hand."""
 
+# Two-legged parts: pin names in the order a wire's ends a, b map onto them.
+TWO_LEGS = {
+    "resistor": ("1", "2"),
+    "led": ("anode", "cathode"),
+    "diode": ("anode", "cathode"),
+    "capacitor_ceramic": ("1", "2"),
+    "capacitor_electrolytic": ("+", "-"),
+}
+
 # DOIT ESP32 DevKit V1 (30 pins), antenna end up, USB end down, top to bottom.
 ESP32_DEVKIT_V1_30_LEFT = [
     "EN", "GPIO36", "GPIO39", "GPIO34", "GPIO35", "GPIO32", "GPIO33", "GPIO25",
