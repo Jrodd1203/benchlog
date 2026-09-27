@@ -133,8 +133,17 @@
   stroke-width: 0.15;
 }
 
+.bb-wire-ghost {
+  fill: none;
+  stroke: #b3261e;
+  stroke-width: 0.65;
+  stroke-dasharray: 1.2 0.8;
+  opacity: 0.45;
+  stroke-linecap: round;
+}
+
 .bb-fade {
-  animation: bb-fade 140ms ease-out;
+  animation: bb-fade 350ms ease-out;
 }
 
 @keyframes bb-fade {

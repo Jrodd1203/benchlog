@@ -4,7 +4,16 @@
 /** A hole name such as "A12" or "R+15". */
 export type Hole = string
 
-export type ComponentType = 'esp32_devkit_v1_30' | 'resistor' | 'led' | 'potentiometer'
+export type ComponentType =
+  | 'esp32_devkit_v1_30'
+  | 'resistor'
+  | 'led'
+  | 'potentiometer'
+  | 'capacitor_electrolytic'
+  | 'capacitor_ceramic'
+  | 'transistor_npn'
+  | 'diode'
+  | 'i2c_module'
 
 export interface Component {
   id: string

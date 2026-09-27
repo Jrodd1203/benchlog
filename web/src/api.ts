@@ -269,6 +269,22 @@ function describeChanges(prev: Circuit, curr: Circuit): { lines: string[]; elect
   return { lines, electrical }
 }
 
+// ── Remote community circuits ─────────────────────────────────────────────────────────────────
+
+/** Fetch a circuit.json from a public GitHub repo (raw.githubusercontent.com). Returns null on failure. */
+export async function fetchRemoteCircuit(owner: string, repo: string): Promise<Circuit | null> {
+  try {
+    const url = `https://raw.githubusercontent.com/${owner}/${repo}/main/benchlog/circuit.json`
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const data = await res.json()
+    if (!data || typeof data !== 'object' || !('wires' in data) || !('components' in data)) return null
+    return data as Circuit
+  } catch {
+    return null
+  }
+}
+
 // ── Projects ─────────────────────────────────────────────────────────────────────────────────
 //
 // GET/POST /api/projects create real project folders (a git repo each, same layout as

@@ -226,3 +226,6 @@ web/dist/
 
 # benchlog local state (baseline scans, etc.)
 .benchlog/
+
+# Claude Code session files
+.claude/
