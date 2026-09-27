@@ -26,11 +26,11 @@ from benchlog.core.scan import reading_from_circuit
 from benchlog.serial.service import SerialSnapshot
 from benchlog.server.branch_routes import router as branch_router
 from benchlog.server.check_routes import router as check_router
+from benchlog.server.deps import PROJECTS_ROOT, ProjectDep
 from benchlog.server.pr_routes import not_found as pr_not_found
 from benchlog.server.pr_routes import router as pr_router
-from benchlog.server.deps import PROJECTS_ROOT, ProjectDep
 from benchlog.server.serial_routes import router as serial_router
-from benchlog.server.serial_routes import serial_service
+from benchlog.server.serial_routes import serial_service, snapshot_for
 
 
 @asynccontextmanager
@@ -52,13 +52,6 @@ app.add_exception_handler(PRNotFound, pr_not_found)
 @app.exception_handler(GitError)
 async def _user_error(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
-
-
-
-# Where the web UI's "New project" creates folders, one benchlog project (git repo) per
-# subdirectory — the same layout `cd somewhere && benchlog init` produces, just automated.
-# `benchlog serve` normally runs inside a single project (see get_project above); this is a
-# separate, lightweight registry of projects the UI can list and create.
 
 
 # Reserved on Windows regardless of extension; mkdir raises an unhandled OSError for these.
@@ -303,7 +296,7 @@ def scan(request: ScanRequest, project: ProjectDep, http: Request) -> ScanRespon
         reading = read_board(
             project.camera_index(request.camera), Path(request.image) if request.image else None, project.calibration_dir
         )
-    serial = serial_service(http.app).snapshot()  # None when no agent is connected
+    serial = snapshot_for(http.app, project)  # None when there's no ESP32 (connects if needed)
     observations = project.scan(reading, sync=request.sync, serial=serial.readings() if serial else None)
     check = project.check_with_serial(
         observations, serial.probe.pins if serial else None, serial.i2c.devices if serial else None
@@ -347,7 +340,7 @@ def edit(obs_id: str, request: EditRequest, project: ProjectDep) -> Observation:
 @app.post("/api/commit")
 def commit(request: CommitRequest, project: ProjectDep, http: Request) -> CommitResponse:
     """Check the circuit against the board through the ESP32 first; a failure blocks unless `force`."""
-    serial = serial_service(http.app).snapshot()  # None when no agent is connected
+    serial = snapshot_for(http.app, project)  # None when there's no ESP32 (connects if needed)
     check = project.hardware_check(
         serial.probe.pins if serial else None,
         serial.i2c.devices if serial else None,
