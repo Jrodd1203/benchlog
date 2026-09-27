@@ -277,12 +277,39 @@ function describeChanges(prev: Circuit, curr: Circuit): { lines: string[]; elect
 }
 
 // ── Remote community circuits ─────────────────────────────────────────────────────────────────
+//
+// No auth — public repos only. GitHub API: 60 req/hour per IP unauthenticated.
+// Commit list via api.github.com; file contents via raw.githubusercontent.com.
 
-/** Fetch a circuit.json from a public GitHub repo (raw.githubusercontent.com). Returns null on failure. */
-export async function fetchRemoteCircuit(owner: string, repo: string): Promise<Circuit | null> {
+import type { RemoteCommit } from './types'
+
+/**
+ * Commits that touched benchlog/circuit.json in a public repo, newest first.
+ * Throws a user-readable message on rate-limit (403) or not-found (404).
+ */
+export async function fetchRemoteHistory(owner: string, repo: string): Promise<RemoteCommit[]> {
+  const res = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/commits?path=benchlog%2Fcircuit.json&per_page=100`,
+    { headers: { Accept: 'application/vnd.github.v3+json' } },
+  )
+  if (res.status === 403) throw new Error('GitHub rate limit reached — try again in an hour.')
+  if (res.status === 404) throw new Error('Repository not found or circuit.json not committed yet.')
+  if (!res.ok) throw new Error(`GitHub API error (${res.status})`)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = (await res.json()) as any[]
+  return data.map((c) => ({
+    sha: c.sha as string,
+    shortSha: (c.sha as string).slice(0, 7),
+    message: (c.commit.message as string).split('\n')[0],
+    author: c.commit.author.name as string,
+    date: c.commit.author.date as string,
+  }))
+}
+
+/** circuit.json at a specific commit SHA from a public repo. Returns null on any failure. */
+export async function fetchRemoteCircuitAt(owner: string, repo: string, sha: string): Promise<Circuit | null> {
   try {
-    const url = `https://raw.githubusercontent.com/${owner}/${repo}/main/benchlog/circuit.json`
-    const res = await fetch(url)
+    const res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${sha}/benchlog/circuit.json`)
     if (!res.ok) return null
     const data = await res.json()
     if (!data || typeof data !== 'object' || !('wires' in data) || !('components' in data)) return null

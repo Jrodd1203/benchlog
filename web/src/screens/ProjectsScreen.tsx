@@ -1,57 +1,8 @@
 import { useEffect, useState } from 'react'
-import { createProject, fetchRemoteCircuit, getCircuitAt, getTimeline, listProjects } from '../api'
+import { createProject, getCircuitAt, getTimeline, listProjects } from '../api'
 import { Breadboard } from '../board/Breadboard'
 import { NewProjectModal } from '../components/NewProjectModal'
 import type { Circuit, ProjectSummary, TimelineEntry } from '../types'
-
-const EXPLORE_PROJECTS = [
-  { label: 'Pot + LED', owner: 'Jrodd1203', repo: 'bench-pot-led' },
-  { label: 'Weather Station', owner: 'benchlog-team', repo: 'bench-weather-station' },
-  { label: 'LED Bar', owner: 'benchlog-team', repo: 'bench-led-bar' },
-]
-
-function ExploreSection() {
-  const [loaded, setLoaded] = useState<({ label: string; owner: string; repo: string; circuit: Circuit })[] | null>(null)
-
-  useEffect(() => {
-    let alive = true
-    Promise.all(
-      EXPLORE_PROJECTS.map((p) =>
-        fetchRemoteCircuit(p.owner, p.repo).then((circuit) =>
-          circuit ? { ...p, circuit } : null
-        )
-      )
-    ).then((results) => {
-      if (alive) setLoaded(results.filter((r) => r !== null))
-    })
-    return () => { alive = false }
-  }, [])
-
-  if (loaded !== null && loaded.length === 0) return null
-
-  return (
-    <section className="explore-section">
-      <div className="section-label">
-        <h2>Explore</h2>
-      </div>
-      {loaded === null ? (
-        <p className="muted small">Loading community projects…</p>
-      ) : (
-        <ul className="explore-grid">
-          {loaded.map((p) => (
-            <li key={`${p.owner}/${p.repo}`} className="explore-card">
-              <div className="explore-board">
-                <Breadboard circuit={p.circuit} />
-              </div>
-              <span className="project-name">{p.label}</span>
-              <span className="muted small">{p.owner}/{p.repo}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  )
-}
 
 type WorkflowTab = 'scan' | 'review' | 'commit' | 'check'
 
@@ -189,7 +140,7 @@ function CommandsSection() {
 }
 
 /** Requirement 1 (landing page): what benchlog is, then the local projects to open. */
-export function ProjectsScreen({ onOpen }: { onOpen: (p: ProjectSummary) => void }) {
+export function ProjectsScreen({ onOpen, onExplore }: { onOpen: (p: ProjectSummary) => void; onExplore: () => void }) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
   const [creating, setCreating] = useState(false)
 
@@ -259,7 +210,17 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: ProjectSummary) => void
         </ul>
       )}
 
-      <ExploreSection />
+      <section className="explore-section">
+        <div className="section-label">
+          <h2>Explore</h2>
+          <button type="button" className="btn" onClick={onExplore}>
+            Browse community builds →
+          </button>
+        </div>
+        <p className="muted small">
+          Scrub through the full circuit history of public benchlog repos — no sign-in required.
+        </p>
+      </section>
     </main>
   )
 }
