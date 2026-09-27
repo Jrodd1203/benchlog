@@ -2,9 +2,9 @@
   <rect width="48" height="48" rx="10" fill="#2c5d9e"/>
   <text
     x="25"
-    y="37"
-    font-family="'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif"
-    font-weight="800"
+    y="38"
+    font-family="'Arial Black', Arial, Helvetica, sans-serif"
+    font-weight="900"
     font-size="36"
     text-anchor="middle"
     fill="#eaf0e2"
