@@ -88,7 +88,7 @@ def test_half_wire_must_be_finished_before_accepting(project: Project) -> None:
     assert project.load_circuit() == before  # all or nothing
 
     edited = run("review", "edit", half.id, "b=j45")
-    assert "A40, J45" in edited and "check" not in edited
+    assert "a=A40 b=J45" in edited and "check" not in edited
     run("review", "accept", half.id)
     new_wire = next(w for w in project.load_circuit().wires if w.id == half.object_id)
     assert (new_wire.a, new_wire.b) == ("A40", "J45")

@@ -26,7 +26,7 @@ from benchlog.core.board_state import BoardStateStore, fingerprint
 from benchlog.core.checkpoints import CheckpointStore
 from benchlog.core.models import Circuit, ComponentType, Hole, Observation, ObservationKind, ObservationStatus, Suggestion
 from benchlog.core.pairing import _ID_PREFIX, _new_id, apply_observations
-from benchlog.core.parts import TWO_LEGS, esp32_devkit_v1_30_pins
+from benchlog.core.parts import PIN_NAMES, TWO_LEGS, esp32_devkit_v1_30_pins
 from benchlog.core.reconcile import Reconciliation, SerialReadings, reconcile, serial_record
 from benchlog.core.repo import Commit, GitError, Repo
 from benchlog.core.scan import BoardReading, MisreadError, ScanStore
@@ -53,6 +53,31 @@ class HardwareCheck(BaseModel):
     def trailer(self, forced: bool = False) -> str:
         """Git trailer recording the result in the commit message."""
         return f"ESP32-Check: {self.status}" + (" (forced)" if forced and self.status == "failed" else "")
+
+
+def _known_pins(obs: Observation, ends: dict[str, Hole], new_type: str | None) -> dict[str, Hole]:
+    """A component's pins after an edit, kept to the pins its kind of part has.
+
+    On a two-legged part, a and b (a wire's ends) mean its first and second leg. Changing to a
+    two-legged kind (an LED that's really a resistor) carries its two legs over in order.
+    """
+    old_type = obs.suggested.type.value if obs.suggested and obs.suggested.type else None
+    kind = new_type or old_type
+    names = PIN_NAMES.get(kind)
+    if names is None:  # unknown part: any pin names
+        return {**(obs.after or {}), **ends}
+    pins = dict(obs.after or {})
+    if kind in TWO_LEGS and len(pins) == 2 and set(pins) != set(names):
+        pins = dict(zip(names, pins.values()))  # legs named for another part (or none yet): keep them, in order
+    if kind in TWO_LEGS:
+        first, second = TWO_LEGS[kind]
+        ends = {{"a": first, "b": second}.get(k, k): v for k, v in ends.items()}
+    bad = [k for k in ends if k not in names]
+    if bad:
+        shown = ", ".join(names) if len(names) <= 3 else f"{names[0]}, {names[1]}, ..."
+        raise ProjectError(f"{obs.id}: a {kind} has no pin {', '.join(bad)} (its pins: {shown})")
+    # Anything else (a stray pin from an older edit) isn't a pin of this part.
+    return {k: v for k, v in {**pins, **ends}.items() if k in names}
 
 
 def _anchor_esp32(current: dict[str, Hole], given: dict[str, Hole], template) -> dict[str, Hole]:
@@ -332,6 +357,8 @@ class Project:
         if bad_holes:
             raise ProjectError(f"not a hole on {template.id}: {', '.join(bad_holes)}")
         after = {**(obs.after or {}), **ends}
+        if obs.object_type == "component":
+            after = _known_pins(obs, ends, suggestion.get("type"))
         if obs.suggested and obs.suggested.type == ComponentType.ESP32_DEVKIT_V1_30 and ends:
             after = _anchor_esp32(obs.after or {}, ends, template)
         update: dict = {"after": after, "uncertain_holes": [], "confidence": 1.0}

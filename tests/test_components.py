@@ -112,7 +112,7 @@ def run(*args: str) -> str:
 def test_name_a_component_and_fix_its_polarity(project: Project) -> None:
     assert "unknown part (say what it is: type=...)" in run("review")
     out = run("review", "edit", "obs1", "type=led", "value=red", "anode=F40", "cathode=E40")
-    assert "added component part1: led (red), E40, F40" in out
+    assert "added component part1: led (red), anode=F40 cathode=E40" in out
     run("review", "accept", "obs1")
     [led] = project.load_circuit().components
     assert (led.type, led.value, led.pins) == (ComponentType.LED, "red", {"anode": "F40", "cathode": "E40"})

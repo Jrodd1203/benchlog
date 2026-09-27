@@ -230,3 +230,30 @@ def test_wire_to_resistor_from_the_cli(wire_project: Project) -> None:
     result = CliRunner(env={"COLUMNS": "200"}).invoke(app, ["review", "edit", "obs1", "type=resistor"])
     assert result.exit_code == 0, result.output
     assert "added component r2: resistor" in result.output
+
+
+def test_a_resistor_has_two_legs(wire_project: Project) -> None:
+    wire_project.edit_observation("obs1", suggestion={"type": "resistor"})  # now r2: 1=C26 2=C33
+    # a and b still mean its two legs, so fixing "the second end" moves leg 2, not a third pin.
+    assert wire_project.edit_observation("obs1", {"b": "C32"}).after == {"1": "C26", "2": "C32"}
+    with pytest.raises(ProjectError, match=r"a resistor has no pin E \(its pins: 1, 2\)"):
+        wire_project.edit_observation("obs1", {"E": "C30"})
+    # Changing what a two-legged part is keeps its legs, in order.
+    assert wire_project.edit_observation("obs1", suggestion={"type": "led"}).after == {"anode": "C26", "cathode": "C32"}
+
+
+def test_a_stray_pin_from_an_older_edit_is_dropped(wire_project: Project) -> None:
+    obs = wire_project.pending_observations()[2].model_copy(update={"after": {"1": "A1", "2": "A5", "b": "A4"}})
+    wire_project.save_observations([*wire_project.pending_observations()[:2], obs])
+    assert wire_project.edit_observation("obs3", {"b": "A4"}).after == {"1": "A1", "2": "A4"}
+
+
+def test_review_names_the_legs(wire_project: Project) -> None:
+    result = CliRunner(env={"COLUMNS": "200"}).invoke(app, ["review", "edit", "obs1", "type=resistor"])
+    assert "r2: resistor, 1=C26 2=C33" in result.output
+
+
+def test_naming_an_unknown_two_legged_part_keeps_its_legs(wire_project: Project) -> None:
+    obs = Observation(id="obs9", kind="added", object_type="component", object_id="part1", after={"x": "A1", "y": "A5"}, confidence=0.5)
+    wire_project.save_observations([*wire_project.pending_observations(), obs])
+    assert wire_project.edit_observation("obs9", suggestion={"type": "resistor"}).after == {"1": "A1", "2": "A5"}
