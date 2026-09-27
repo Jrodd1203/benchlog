@@ -2,6 +2,12 @@
   "provider": "python",
   "steps": {
     "install": {
+      "inputs": [
+        {
+          "local": true,
+          "include": ["."]
+        }
+      ],
       "commands": ["pip install -e '.[server]'"]
     }
   },
