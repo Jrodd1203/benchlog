@@ -1,8 +1,57 @@
 import { useEffect, useState } from 'react'
-import { createProject, getCircuitAt, getTimeline, listProjects } from '../api'
+import { createProject, fetchRemoteCircuit, getCircuitAt, getTimeline, listProjects } from '../api'
 import { Breadboard } from '../board/Breadboard'
 import { NewProjectModal } from '../components/NewProjectModal'
 import type { Circuit, ProjectSummary, TimelineEntry } from '../types'
+
+const EXPLORE_PROJECTS = [
+  { label: 'Pot + LED', owner: 'Jrodd1203', repo: 'bench-pot-led' },
+  { label: 'Weather Station', owner: 'benchlog-team', repo: 'bench-weather-station' },
+  { label: 'LED Bar', owner: 'benchlog-team', repo: 'bench-led-bar' },
+]
+
+function ExploreSection() {
+  const [loaded, setLoaded] = useState<({ label: string; owner: string; repo: string; circuit: Circuit })[] | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    Promise.all(
+      EXPLORE_PROJECTS.map((p) =>
+        fetchRemoteCircuit(p.owner, p.repo).then((circuit) =>
+          circuit ? { ...p, circuit } : null
+        )
+      )
+    ).then((results) => {
+      if (alive) setLoaded(results.filter((r) => r !== null))
+    })
+    return () => { alive = false }
+  }, [])
+
+  if (loaded !== null && loaded.length === 0) return null
+
+  return (
+    <section className="explore-section">
+      <div className="section-label">
+        <h2>Explore</h2>
+      </div>
+      {loaded === null ? (
+        <p className="muted small">Loading community projects…</p>
+      ) : (
+        <ul className="explore-grid">
+          {loaded.map((p) => (
+            <li key={`${p.owner}/${p.repo}`} className="explore-card">
+              <div className="explore-board">
+                <Breadboard circuit={p.circuit} />
+              </div>
+              <span className="project-name">{p.label}</span>
+              <span className="muted small">{p.owner}/{p.repo}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
 
 type WorkflowTab = 'scan' | 'review' | 'commit' | 'check'
 
@@ -203,6 +252,8 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: ProjectSummary) => void
           ))}
         </ul>
       )}
+
+      <ExploreSection />
     </main>
   )
 }
@@ -222,9 +273,9 @@ function HeroBoard() {
       if (!alive) return
       setEntries(data)
       setIndex(data.length - 1)
-      Promise.all(data.map((e) => getCircuitAt(e.sha).then((c) => [e.sha, c] as const))).then((pairs) => {
-        if (alive) setAllCircuits(new Map(pairs))
-      })
+      Promise.all(data.map((e) => getCircuitAt(e.sha).then((c) => [e.sha, c] as const)))
+        .then((pairs) => { if (alive) setAllCircuits(new Map(pairs)) })
+        .catch(() => {})
     })
     return () => { alive = false }
   }, [])

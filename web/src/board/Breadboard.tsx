@@ -89,11 +89,14 @@ export function Breadboard({
     }
   }, [occupied, previous])
 
-  // Ghost wire paths: wires from `previous` whose endpoints were removed (i.e. the wire moved).
+  // Ghost wire paths: wires from `previous` whose endpoints changed or that no longer exist.
   const ghostWires = useMemo(() => {
     if (!previous) return []
-    return previous.wires.filter((w) => removed.has(w.a) || removed.has(w.b))
-  }, [previous, removed])
+    return previous.wires.filter((pw) => {
+      const cw = circuit.wires.find((w) => w.id === pw.id)
+      return !cw || cw.a !== pw.a || cw.b !== pw.b
+    })
+  }, [previous, circuit.wires])
 
   const channelY = (columnY('E') + columnY('F')) / 2
   const labelRows = [1, ...Array.from({ length: 12 }, (_, i) => (i + 1) * 5)]

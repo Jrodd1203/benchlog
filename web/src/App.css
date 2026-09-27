@@ -101,6 +101,10 @@
   justify-content: space-between;
 }
 
+.row.tight {
+  margin-top: 0;
+}
+
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -334,6 +338,43 @@
 .project-card .chip {
   grid-column: 2;
   grid-row: 1 / span 2;
+}
+
+/* ── Explore (community showcase) ──────────────────────────────────────── */
+
+.explore-section {
+  margin-top: 2.5rem;
+}
+
+.explore-grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.explore-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.9rem 1.1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.explore-board {
+  width: 100%;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.explore-board svg {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 /* ── Tabs ──────────────────────────────────────────────────────────────── */

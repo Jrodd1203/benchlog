@@ -147,7 +147,7 @@ export function ReviewScreen({ onCommit, onWorkspace }: { onCommit: () => void; 
       {picking && (
         <p className="notice pick">
           Click the hole where wire end <strong>{picking.end.toUpperCase()}</strong> really is.{' '}
-          <button type="button" className="link-btn" onClick={() => setPicking(null)}>
+          <button type="button" className="btn link" onClick={() => setPicking(null)}>
             Cancel
           </button>
         </p>

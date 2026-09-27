@@ -21,15 +21,9 @@ export function WorkspaceScreen({ onReview }: { onReview: () => void }) {
 
   useEffect(() => {
     let alive = true
-    Promise.all([getCircuit(), getStatus().catch(() => null)]).then(([c, s]) => {
-      if (!alive) return
-      setCircuit(c)
-      setStatus(s)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
+    refresh().then(() => { if (!alive) { setCircuit(null); setStatus(null) } })
+    return () => { alive = false }
+  }, [refresh])
 
   const runScan = async (demo: boolean) => {
     setScanning(true)
@@ -88,7 +82,7 @@ export function WorkspaceScreen({ onReview }: { onReview: () => void }) {
         </div>
       )}
 
-      <section className="board-area board-frame">{circuit && <Breadboard circuit={circuit.data} />}</section>
+      <section className="board-area board-frame" data-scanning={scanning ? '' : undefined}>{circuit && <Breadboard circuit={circuit.data} />}</section>
 
       <aside className="side-panel">
         <h2>Circuit</h2>
