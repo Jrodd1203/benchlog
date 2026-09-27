@@ -299,6 +299,7 @@ function describeChanges(prev: Circuit, curr: Circuit): { lines: string[]; elect
 // No auth — public repos only. GitHub API: 60 req/hour per IP unauthenticated.
 // Commit list via api.github.com; file contents via raw.githubusercontent.com.
 
+import { parseCheckTrailer } from './checkTrailer'
 import type { RemoteCommit, RemoteRepo } from './types'
 
 // GitHub allows ~60 unauthenticated API requests an hour per IP, and a demo room shares one IP.
@@ -350,7 +351,7 @@ function rateLimitMessage(res: Response): string {
  * Throws a user-readable message on rate-limit (403/429, with nothing cached) or not-found (404).
  */
 export async function fetchRemoteHistory(owner: string, repo: string): Promise<RemoteCommit[]> {
-  const key = `history:${owner}/${repo}`.toLowerCase()
+  const key = `history2:${owner}/${repo}`.toLowerCase() // v2: commits carry the ESP32 check
   const cached = readCache<CachedHistory>(key)
   if (cached && Date.now() - cached.at < HISTORY_FRESH_MS) return cached.commits
 
@@ -378,12 +379,13 @@ export async function fetchRemoteHistory(owner: string, repo: string): Promise<R
   if (!res.ok) throw new Error(`GitHub API error (${res.status})`)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data = (await res.json()) as any[]
-  const commits = data.map((c) => ({
+  const commits: RemoteCommit[] = data.map((c) => ({
     sha: c.sha as string,
     shortSha: (c.sha as string).slice(0, 7),
     message: (c.commit.message as string).split('\n')[0],
     author: c.commit.author.name as string,
     date: c.commit.author.date as string,
+    check: parseCheckTrailer(c.commit.message as string),
   }))
   writeCache(key, { at: Date.now(), etag: res.headers.get('etag'), commits } satisfies CachedHistory)
   return commits
