@@ -299,12 +299,12 @@ function describeChanges(prev: Circuit, curr: Circuit): { lines: string[]; elect
 // No auth — public repos only. GitHub API: 60 req/hour per IP unauthenticated.
 // Commit list via api.github.com; file contents via raw.githubusercontent.com.
 
-import type { RemoteCommit } from './types'
+import type { RemoteCommit, RemoteRepo } from './types'
 
 // GitHub allows ~60 unauthenticated API requests an hour per IP, and a demo room shares one IP.
 // So: circuits are cached for good (a commit's file never changes), commit lists are reused for a
-// couple of minutes and then revalidated with an ETag (an unchanged 304 doesn't count against the
-// limit), and if the limit is hit anyway the last saved list is shown instead of an error.
+// couple of minutes and then revalidated with an ETag (a 304 still counts when anonymous, but
+// skips the download), and if the limit is hit anyway the last saved list is shown instead of an error.
 
 const EXPLORE_CACHE = 'benchlog:explore:'
 const HISTORY_FRESH_MS = 2 * 60 * 1000
@@ -387,6 +387,35 @@ export async function fetchRemoteHistory(owner: string, repo: string): Promise<R
   }))
   writeCache(key, { at: Date.now(), etag: res.headers.get('etag'), commits } satisfies CachedHistory)
   return commits
+}
+
+// Repos published with `benchlog push` are tagged with this topic (src/benchlog/core/remote.py).
+const COMMUNITY_TOPIC = 'benchlog-circuit'
+const COMMUNITY_FRESH_MS = 5 * 60 * 1000 // the search API allows only 10 anonymous requests a minute
+
+/** Public repos tagged COMMUNITY_TOPIC, most recently updated first. Never throws: [] or the last saved list. */
+export async function fetchCommunityRepos(): Promise<RemoteRepo[]> {
+  const cached = readCache<{ at: number; repos: RemoteRepo[] }>('community')
+  if (cached && Date.now() - cached.at < COMMUNITY_FRESH_MS) return cached.repos
+  try {
+    const res = await fetch(
+      `https://api.github.com/search/repositories?q=topic:${COMMUNITY_TOPIC}&sort=updated&order=desc&per_page=30`,
+      { headers: { Accept: 'application/vnd.github.v3+json' } },
+    )
+    if (!res.ok) return cached?.repos ?? []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = (await res.json()) as { items: any[] }
+    const repos: RemoteRepo[] = data.items.map((r) => ({
+      owner: r.owner.login as string,
+      repo: r.name as string,
+      label: r.name as string,
+      description: (r.description as string | null) ?? `A benchlog build by ${r.owner.login}`,
+    }))
+    writeCache('community', { at: Date.now(), repos })
+    return repos
+  } catch {
+    return cached?.repos ?? []
+  }
 }
 
 export async function fetchRemoteCircuitAt(owner: string, repo: string, sha: string): Promise<Circuit | null> {
