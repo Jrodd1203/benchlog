@@ -1,0 +1,11 @@
+{
+  "provider": "python",
+  "steps": {
+    "install": {
+      "commands": ["pip install -e '.[server]'"]
+    }
+  },
+  "deploy": {
+    "startCommand": "uvicorn benchlog.server.app:app --host 0.0.0.0 --port $PORT"
+  }
+}
