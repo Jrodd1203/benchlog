@@ -18,7 +18,7 @@ from benchlog.core.checks.store import check_project
 from benchlog.core.diff import CircuitDiff, describe
 from benchlog.core.diff import diff as circuit_diff
 from benchlog.core.netlist import natural_key
-from benchlog.core.numbering import from_printed, to_printed
+from benchlog.core.numbering import describe_numbering, first_row_for, from_printed, to_printed
 from benchlog.core.models import Circuit, Observation, ObservationKind
 from benchlog.core.project import CIRCUIT_PATH, HardwareCheck, Project, ProjectError
 from benchlog.demo import DEFAULT_WORKSPACE
@@ -563,13 +563,23 @@ def camera_preview(index: int | None = typer.Argument(None, help="Camera index (
 
 @camera_app.command("numbering")
 @_handle_errors
-def camera_numbering(first_row: int = typer.Argument(..., help="The number printed on your board's first row: 1 or 0.")) -> None:
-    """Show and accept hole numbers as printed on your board (some boards start counting at 0)."""
-    if first_row not in (0, 1):
-        raise ProjectError("the first row is numbered 1 (most boards) or 0")
+def camera_numbering(
+    label: int = typer.Argument(..., help="A label printed on your board's column numbers, e.g. 0."),
+    at: int = typer.Option(1, "--at", help="Which column carries it, counting from the numbered end (1 = the first)."),
+) -> None:
+    """Show and accept hole numbers as printed on your board.
+
+    Boards label columns differently: `numbering 1` (the usual), `numbering 0` (starts at 0), or
+    `numbering 0 --at 2` (the first column is unlabeled and the second is labeled 0).
+    """
+    if not 1 <= at <= 63:
+        raise ProjectError("--at is a column number from 1 to 63")
+    first_row = first_row_for(label, at)
+    if not -5 <= first_row <= 5:
+        raise ProjectError(f"column {at} labeled {label} doesn't look like a real board's numbering")
     Project.find().set_config("first_row", first_row)
     _first_row_in.cache_clear()
-    print(f"hole numbers now match a board whose first row is printed as {first_row}")
+    print(f"hole numbers now match your board ({describe_numbering(first_row)})")
 
 
 @camera_app.command("calibrate")

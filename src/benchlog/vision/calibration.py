@@ -25,6 +25,7 @@ import cv2
 import numpy as np
 
 from benchlog.core.board import RAILS
+from benchlog.core.numbering import COMMON
 from benchlog.vision.bb830_layout import BOARD_H_MM, BOARD_W_MM, hole_positions_mm
 from benchlog.vision.capture import (
     MAX_RELIABLE_RESIDUAL_PX,
@@ -723,8 +724,8 @@ class CalibrationEditor:
             self.selected = key - ord("1")
         elif key == ord("r"):
             self.row1_left = not self.row1_left
-        elif key == ord("n"):
-            self.first_row = 0 if self.first_row == 1 else 1
+        elif key == ord("n"):  # cycle the common labelings: 1 at the 1st column, 0 at the 1st, 0 at the 2nd
+            self.first_row = COMMON[(COMMON.index(self.first_row) + 1) % len(COMMON)] if self.first_row in COMMON else 1
         elif key in _NUDGE and self.corners is not None:
             corners = self.corners.copy()
             corners[self.selected] += np.float32(_NUDGE[key])
@@ -743,8 +744,10 @@ def draw_holes(img: np.ndarray, holes: dict[str, tuple[float, float]], pitch: fl
         color = (60, 60, 230) if rail and "+" in rail else (230, 120, 40) if rail else (60, 200, 60)
         cv2.circle(img, (round(x), round(y)), radius, color, -1, cv2.LINE_AA)
     offset = first_row - 1
-    for printed in (first_row, 5, 10, 20, 30, 40, 50, 60):
+    for printed in (0, 1, 5, 10, 20, 30, 40, 50, 60):
         row = printed - offset
+        if printed in (0, 1) and printed != max(first_row, 0):
+            continue  # label only where the board's numbering starts (0 or 1)
         if f"A{row}" not in holes:
             continue
         x, y = holes[f"A{row}"]

@@ -23,6 +23,7 @@ def test_translation() -> None:
     assert to_printed("A4", 1) == "A4"
     assert from_printed("g30", 0) == "G31" and from_printed("G30", 1) == "G30"
     assert from_printed("R+5", 0) == "R+5"  # rails aren't numbered on boards
+    assert to_printed("A2 A62 A1", -1) == "A0 A60 A-1" and from_printed("A60", -1) == "A62"
 
 
 @pytest.fixture
@@ -57,9 +58,21 @@ def test_cli_shows_and_accepts_printed_numbers(project: Project) -> None:
     assert "A13" in run("diff")
 
 
+def test_board_with_unlabeled_end_columns(project: Project) -> None:
+    """The 2nd column is labeled 0 (the 1st is unlabeled), the 62nd is labeled 60."""
+    assert "the 2nd column is labeled 0" in run("camera", "numbering", "0", "--at", "2")
+    assert project.first_row() == -1
+    out = run("scan", "--simulate", str(EXAMPLES / "moved-wire.json"), "--no-serial")
+    assert "w5: b A2 → A10" in out  # internally A4 → A12: printed = column - 2
+    run("review", "edit", "obs1", "b=A60")
+    run("review", "accept", "obs1")
+    assert next(w for w in project.load_circuit().wires if w.id == "w5").b == "A62"  # the 62nd column
+
+
 def test_numbering_validation(project: Project) -> None:
-    result = runner.invoke(app, ["camera", "numbering", "5"])
-    assert result.exit_code == 1 and "numbered 1" in result.output
+    result = runner.invoke(app, ["camera", "numbering", "30", "--at", "2"])
+    assert result.exit_code == 1 and "doesn't look like" in result.output
+    assert runner.invoke(app, ["camera", "numbering", "0", "--at", "70"]).exit_code == 1
 
 
 def test_api_reports_numbering(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -82,6 +95,11 @@ def test_calibration_keeps_numbering(tmp_path: Path) -> None:
     editor = cm.CalibrationEditor()
     editor.update(DESK, now=0.0)
     editor.on_key(ord("n"), DESK, 0.1)
+    assert editor.first_row == 0
+    editor.on_key(ord("n"), DESK, 0.2)
+    assert editor.first_row == -1  # "0 at the 2nd column"
+    editor.on_key(ord("n"), DESK, 0.3)
+    editor.on_key(ord("n"), DESK, 0.4)
     assert editor.first_row == 0
     cal = cm.Calibration(corners=editor.corners, holes=editor.named_holes(), reference=DESK, first_row=editor.first_row)
     cal.save(tmp_path)

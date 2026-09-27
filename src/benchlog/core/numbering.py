@@ -1,13 +1,15 @@
 """Row numbers as printed on the user's breadboard vs benchlog's internal A1..J63.
 
-Some boards print their first row as 0, not 1. benchlog keeps A1..J63 everywhere inside (circuits,
-checks, the API, the UI's geometry) and only translates what people read and type, so the numbers
-match the board in front of them. Rails aren't numbered on boards, so they're left alone.
+Boards don't all label their columns the same way: some start at 0, some leave the end columns
+unlabeled (e.g. the 2nd column is labeled 0, so the 1st would be -1). `first_row` is the label the
+1st column carries (or would carry). benchlog keeps A1..J63 everywhere inside (circuits, checks, the
+API, the UI's geometry) and only translates what people read and type, so the numbers match the
+board in front of them. Rails aren't numbered on boards, so they're left alone.
 """
 
 import re
 
-_TERMINAL = re.compile(r"\b([A-J])(\d{1,2})\b")
+_TERMINAL = re.compile(r"\b([A-J])(-?\d{1,2})\b")
 ROWS = 63
 
 
@@ -30,3 +32,21 @@ def from_printed(hole: str, first_row: int) -> str:
     if not m or first_row == 1:
         return hole.strip().upper()
     return f"{m[1]}{int(m[2]) - (first_row - 1)}"
+
+
+def first_row_for(label: int, column: int) -> int:
+    """`first_row` for a board whose `column`-th column (counting from 1) is labeled `label`."""
+    return label - column + 1
+
+
+def describe_numbering(first_row: int) -> str:
+    """e.g. "the 2nd column is labeled 0" for first_row -1."""
+    if first_row >= 0:
+        return f"the 1st column is labeled {first_row}"
+    column = 1 - first_row
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(column, "th")
+    return f"the {column}{suffix} column is labeled 0"
+
+
+# Layouts the calibration window's `n` key cycles through.
+COMMON = (1, 0, -1)
