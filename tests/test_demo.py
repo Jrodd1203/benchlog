@@ -80,32 +80,32 @@ def client(workspace: Path, monkeypatch: pytest.MonkeyPatch):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
+    from benchlog.server import app as app_module
     from benchlog.server import deps
-    from benchlog.server.app import app as api
 
-    monkeypatch.setenv("BENCHLOG_WORKSPACE", str(workspace))
+    monkeypatch.setattr(deps, "PROJECTS_ROOT", workspace)
+    monkeypatch.setattr(app_module, "PROJECTS_ROOT", workspace)
     monkeypatch.setenv("BENCHLOG_PROJECT", str(workspace / "led-bar"))
-    deps.open_project(None)
-    yield TestClient(api)
-    deps.open_project(None)
+    return TestClient(app_module.app)
 
 
-def test_list_and_open_projects(client) -> None:
-    listed = client.get("/api/projects").json()
-    assert {p["id"] for p in listed} == {d.folder for d in DEMOS}
-    assert listed[0]["id"] == "led-bar" and listed[0]["open"]  # the open one first
-    names = {p["id"]: p["name"] for p in listed}
-    assert names["weather-station"] == "Weather station"
-    assert all(p["demo"] and p["updated"] and p["board"] == "bb830" for p in listed)
+def test_seeded_projects_are_listed(client) -> None:
+    listed = {p["id"]: p for p in client.get("/api/projects").json()}
+    assert set(listed) == {d.folder for d in DEMOS}
+    assert listed["weather-station"]["name"] == "Weather station"
+    assert all(p["updated"] and p["board"] == "bb830" for p in listed.values())
 
-    opened = client.post("/api/projects/pot-led/open").json()
-    assert opened["open"] and opened["id"] == "pot-led"
-    assert client.get("/api/projects/current").json()["id"] == "pot-led"
-    # Every other route now works on pot-led.
-    assert client.get("/api/history").json()[0]["commit"]["subject"] == "Add status LED on GPIO13"
-    assert [p["title"] for p in client.get("/api/prs").json()] == ["Move sensor to GPIO12"]
 
-    missing = client.post("/api/projects/nope/open")
+def test_every_route_follows_the_selected_project(client) -> None:
+    # Without ?project= the routes use the project serve started with (led-bar)...
+    assert [p["title"] for p in client.get("/api/prs").json()] == ["Add a third LED"]
+    # ...and with it, every route (including branches and PRs) uses the selected one.
+    assert [p["title"] for p in client.get("/api/prs", params={"project": "pot-led"}).json()] == ["Move sensor to GPIO12"]
+    branches = client.get("/api/branches", params={"project": "pot-led"}).json()
+    assert {b["name"] for b in branches} == {"main", "move-sensor"}
+    history = client.get("/api/history", params={"project": "pot-led"}).json()
+    assert history[0]["commit"]["subject"] == "Add status LED on GPIO13"
+    missing = client.get("/api/prs", params={"project": "nope"})
     assert missing.status_code == 400 and "nope" in missing.json()["detail"]
 
 

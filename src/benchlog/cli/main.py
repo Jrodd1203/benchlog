@@ -824,7 +824,7 @@ def serve(
         project = Project.find(found[0].parent.parent)
     # The app finds the project per request through these, in this process and in reload workers.
     os.environ["BENCHLOG_PROJECT"] = str(project.repo.root)
-    os.environ["BENCHLOG_WORKSPACE"] = str(workspace)
+    os.environ["BENCHLOG_PROJECTS_ROOT"] = str(workspace)  # the UI's project list (GET /api/projects)
     shown = "localhost" if host in ("127.0.0.1", "localhost") else host
     print(f"serving [bold]{escape(str(project.repo.root))}[/bold] at http://{shown}:{port} (API docs: /docs)")
     if workspace.is_dir():

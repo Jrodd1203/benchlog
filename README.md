@@ -61,8 +61,9 @@ screen works on them:
 - **weather-station**: ESP32 + BME280 over I2C; the wiring came in through a PR, tested and merged
 - **led-bar**: three LEDs; branch `third-led` has an open PR that passes and is ready to merge
 
-`--dir` picks another folder, `--reset` rebuilds them (only folders it generated). The API lists
-projects at `GET /api/projects` and switches with `POST /api/projects/{id}/open`.
+`--dir` picks another folder, `--reset` rebuilds them (only folders it generated). They're in the
+same folder the UI's "New project" uses, so they show up in its project list (`GET /api/projects`);
+every API route takes `?project=<id>` to pick one.
 
 ## Scanning from the bench camera
 
