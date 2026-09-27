@@ -123,6 +123,9 @@ def _print_observations(observations: list[Observation], reconciliation: "Reconc
             print(f"      [red]{escape(verdict.message)}[/red]")
 
 
+NO_ESP32 = "no ESP32 found"
+
+
 def _serial_snapshot(project: Project, use_serial: bool) -> tuple["SerialSnapshot | None", str | None]:
     """Read the ESP32 agent (saved port, else auto-detected). Never raises: returns (None, why) instead."""
     if not use_serial:
@@ -132,7 +135,7 @@ def _serial_snapshot(project: Project, use_serial: bool) -> tuple["SerialSnapsho
 
     port = project.config().get("serial_port") or find_esp32_port()
     if not port:
-        return None, None
+        return None, NO_ESP32
 
     try:
         return snapshot_once(port), None
@@ -204,12 +207,16 @@ def scan(
         ]:
             print(f"[dim]debug:[/dim] {escape(line)}")
 
-    observations = project.scan(reading, sync=sync)
+    # Read the ESP32 before recording the scan, so its readings are kept with the proposals and saved
+    # into the circuit when they're accepted.
+    snapshot, note = _serial_snapshot(project, use_serial and not sync)
+    if note == NO_ESP32:
+        note += "; camera only (pick its port with `benchlog serial list` and `benchlog serial use`)"
+    observations = project.scan(reading, sync=sync, serial=snapshot.readings() if snapshot else None)
     if sync:
         project.check_with_serial([], None, None)  # nothing pending: clear old verdicts
         print(f"board recorded as matching the circuit ({len(reading.occupied)} occupied holes)")
         return
-    snapshot, note = _serial_snapshot(project, use_serial)
     reconciliation = project.check_with_serial(
         observations, snapshot.probe.pins if snapshot else None, snapshot.i2c.devices if snapshot else None
     )
@@ -360,7 +367,7 @@ def commit(
         raise ProjectError("nothing to commit: the circuit matches HEAD")
     snapshot, note = _serial_snapshot(project, use_serial=True)
     check = project.hardware_check(
-        snapshot.probe.pins if snapshot else None, snapshot.i2c.devices if snapshot else None, reason=note or "no ESP32 found"
+        snapshot.probe.pins if snapshot else None, snapshot.i2c.devices if snapshot else None, reason=note or NO_ESP32
     )
     _print_hardware_check(check)
     if check.status == "failed" and not force:
