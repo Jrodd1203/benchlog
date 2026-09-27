@@ -412,7 +412,66 @@
 }
 
 /* In the Explore screen, .explore-grid is a button grid, not the old list */
-.explore-root .explore-grid {
+.explore-root .explore-tabs {
+  padding: 0;
+  background: none;
+}
+
+.explore-board-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .explore-board-row { grid-template-columns: 1fr; }
+}
+
+.explore-commits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.explore-commits li {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.7rem 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.explore-commits li:first-child { border-top: none; }
+
+.explore-commit {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.explore-commit:hover .explore-commit-message { text-decoration: underline; }
+.explore-commit-message { font-weight: 600; }
+
+.badge.check-passed { color: var(--ok); }
+.badge.check-failed { color: var(--bad); }
+.badge.check-skipped,
+.badge.check-none { color: var(--muted); }
+
+.explore-grid {
   list-style: none;
   padding: 0;
   margin: 0;

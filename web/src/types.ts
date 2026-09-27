@@ -205,6 +205,8 @@ export interface RemoteCommit {
   author: string
   /** ISO 8601 */
   date: string
+  /** The ESP32 check `benchlog commit` recorded in the message (ESP32-Check: ...), if any. */
+  check?: { status: 'passed' | 'failed' | 'skipped'; forced: boolean }
 }
 
 /** A curated public repo entry for the Explore screen. */
