@@ -238,6 +238,11 @@ def reconcile(
         return Reconciliation(proposals=verdicts, pins=[], i2c=[], warnings=[], serial_checked=pins is not None)
 
     proposed, applied = _apply_each(circuit, observations)
+    if esp32 not in {c.id for c in proposed.components}:
+        # The proposals take the ESP32 out (or move it by id): there's nothing to check against.
+        verdicts = [ProposalVerdict(observation_id=o.id, verdict="not_checked") for o in observations]
+        warning = f"the scan proposes removing {esp32}, so the ESP32 check was skipped"
+        return Reconciliation(proposals=verdicts, pins=[], i2c=[], warnings=[warning], serial_checked=pins is not None)
     expected = _expectations(proposed, esp32)
     readings = pins or {}
     checks = {
