@@ -30,7 +30,7 @@ from benchlog.server.deps import PROJECTS_ROOT, ProjectDep
 from benchlog.server.pr_routes import not_found as pr_not_found
 from benchlog.server.pr_routes import router as pr_router
 from benchlog.server.serial_routes import router as serial_router
-from benchlog.server.serial_routes import serial_service
+from benchlog.server.serial_routes import serial_service, snapshot_for
 
 
 @asynccontextmanager
@@ -299,7 +299,7 @@ def scan(request: ScanRequest, project: ProjectDep, http: Request) -> ScanRespon
         reading = read_board(
             project.camera_index(request.camera), Path(request.image) if request.image else None, project.calibration_dir
         )
-    serial = serial_service(http.app).snapshot()  # None when no agent is connected
+    serial = snapshot_for(http.app, project)  # None when there's no ESP32 (connects if needed)
     readings = None
     if serial is not None:
         readings = SerialReadings(
@@ -349,7 +349,7 @@ def edit(obs_id: str, request: EditRequest, project: ProjectDep) -> Observation:
 @app.post("/api/commit")
 def commit(request: CommitRequest, project: ProjectDep, http: Request) -> CommitResponse:
     """Check the circuit against the board through the ESP32 first; a failure blocks unless `force`."""
-    serial = serial_service(http.app).snapshot()  # None when no agent is connected
+    serial = snapshot_for(http.app, project)  # None when there's no ESP32 (connects if needed)
     check = project.hardware_check(
         serial.probe.pins if serial else None,
         serial.i2c.devices if serial else None,

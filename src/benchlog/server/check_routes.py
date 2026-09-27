@@ -12,7 +12,7 @@ from benchlog.core.project import ProjectError
 from benchlog.core.reconcile import reconcile
 from benchlog.core.repo import GitError
 from benchlog.server.deps import ProjectDep
-from benchlog.server.serial_routes import serial_service
+from benchlog.server.serial_routes import snapshot_for
 
 router = APIRouter(prefix="/api/checks", tags=["checks"])
 
@@ -23,7 +23,7 @@ def run(project: ProjectDep, request: Request) -> CheckReport:
 
     When the circuit matches HEAD, the report is saved for that commit.
     """
-    snapshot = serial_service(request.app).snapshot()
+    snapshot = snapshot_for(request.app, project)
     reconciliation = None
     if snapshot is not None:
         reconciliation = reconcile(

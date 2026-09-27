@@ -205,3 +205,114 @@ def test_scan_includes_serial_verdicts(tmp_path, monkeypatch: pytest.MonkeyPatch
     [verdict] = data["reconciliation"]["proposals"]
     assert verdict["observation_id"] == obs["id"] and verdict["verdict"] == "conflict"
     assert "may not be seated" in data["reconciliation"]["warnings"][0]
+
+
+# ── Auto-connect for scans and commits (the web app never has to press Connect) ──
+
+
+@pytest.fixture
+def api_project(tmp_path, monkeypatch: pytest.MonkeyPatch, service: SerialService):
+    """A committed working circuit, served by the real app with `service` as its serial agent."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    import shutil
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from benchlog.core.project import Project
+    from benchlog.core.repo import Repo
+    from benchlog.server.app import app
+
+    examples = Path(__file__).parent.parent / "examples" / "circuits"
+    path = tmp_path / "project"
+    repo = Repo.init(path)
+    repo.run("config", "user.name", "Test")
+    repo.run("config", "user.email", "test@example.com")
+    project, _ = Project.init(path)
+    shutil.copy(examples / "working.json", project.circuit_path)
+    project.commit("Working circuit")
+    monkeypatch.setenv("BENCHLOG_PROJECT", str(path))
+    app.state.serial, app.state.serial_failed = service, {}
+    yield project, TestClient(app)
+    app.state.serial, app.state.serial_failed = None, {}
+
+
+def _scan(client) -> dict:
+    import json
+    from pathlib import Path
+
+    circuit = json.loads((Path(__file__).parent.parent / "examples" / "circuits" / "working.json").read_text())
+    return client.post("/api/scan", json={"simulate": circuit}).json()
+
+
+def test_scan_connects_to_an_auto_detected_esp32(api_project, service: SerialService, monkeypatch: pytest.MonkeyPatch):
+    from benchlog.serial import service as service_module
+
+    _, client = api_project
+    monkeypatch.setattr(service_module, "find_esp32_port", lambda: "/dev/cu.usbserial-0001")
+    data = _scan(client)
+    assert data["reconciliation"]["serial_checked"] is True
+    assert service.status().connected and service.status().port == "/dev/cu.usbserial-0001"
+
+
+def test_scan_prefers_the_saved_port(api_project, service: SerialService, monkeypatch: pytest.MonkeyPatch):
+    from benchlog.serial import service as service_module
+
+    project, client = api_project
+    project.set_config("serial_port", "/dev/saved")
+    monkeypatch.setattr(service_module, "find_esp32_port", lambda: "/dev/other")
+    _scan(client)
+    assert service.status().port == "/dev/saved"
+
+
+def test_scan_without_an_esp32_stays_camera_only(api_project, service: SerialService):
+    _, client = api_project  # conftest: no ESP32 is auto-detected
+    data = _scan(client)
+    assert data["serial"] is None and data["reconciliation"]["serial_checked"] is False
+    assert not service.status().connected
+
+
+def test_failed_auto_connect_isnt_retried_on_every_scan(
+    api_project, service: SerialService, board: Board, monkeypatch: pytest.MonkeyPatch
+):
+    from benchlog.serial import service as service_module
+
+    _, client = api_project
+    monkeypatch.setattr(service_module, "find_esp32_port", lambda: "/dev/busy")
+    board.busy = True
+    attempts = []
+    real_client = board.client
+    monkeypatch.setattr(board, "client", lambda port: attempts.append(port) or real_client(port))
+    service._client_factory = board.client
+
+    assert _scan(client)["serial"] is None
+    assert _scan(client)["serial"] is None
+    assert attempts == ["/dev/busy"]  # the second scan didn't wait on the busy port again
+    assert "another process" in client.get("/api/serial/status").json()["last_error"]
+
+
+def test_status_light_connects_when_an_esp32_is_plugged_in(api_project, service: SerialService, monkeypatch: pytest.MonkeyPatch):
+    from benchlog.serial import service as service_module
+
+    _, client = api_project
+    assert client.get("/api/serial/status").json()["connected"] is False  # nothing plugged in
+    monkeypatch.setattr(service_module, "find_esp32_port", lambda: "/dev/cu.usbserial-0001")
+    status = client.get("/api/serial/status").json()
+    assert status["connected"] is True and status["port"] == "/dev/cu.usbserial-0001"
+
+
+def test_status_works_outside_a_project(service: SerialService, monkeypatch: pytest.MonkeyPatch, tmp_path):
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from benchlog.server.app import app
+
+    monkeypatch.delenv("BENCHLOG_PROJECT", raising=False)
+    monkeypatch.chdir(tmp_path)  # not a project: the light still answers
+    app.state.serial, app.state.serial_failed = service, {}
+    try:
+        assert TestClient(app).get("/api/serial/status").json()["connected"] is False
+    finally:
+        app.state.serial = None
