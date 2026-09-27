@@ -32,7 +32,7 @@ from benchlog.server.deps import PROJECTS_ROOT, ProjectDep
 from benchlog.server.pr_routes import not_found as pr_not_found
 from benchlog.server.pr_routes import router as pr_router
 from benchlog.server.serial_routes import router as serial_router
-from benchlog.server.serial_routes import serial_service, snapshot_for
+from benchlog.server.serial_routes import CLIENT_SERIAL_FIELD, ClientSerialReadings, readings_for, serial_service
 
 
 @asynccontextmanager
@@ -130,6 +130,7 @@ class ScanRequest(BaseModel):
     image: str | None = Field(default=None, description="Path to a photo to scan instead of the camera.")
     camera: int | None = Field(default=None, description="Camera index; default: the one chosen with `benchlog camera use`.")
     sync: bool = Field(default=False, description="Record the board as matching the circuit; propose nothing.")
+    serial: ClientSerialReadings | None = Field(default=None, description=CLIENT_SERIAL_FIELD)
 
 
 class ScanResponse(BaseModel):
@@ -167,6 +168,7 @@ class CommitRequest(BaseModel):
     message: str = Field(min_length=1)
     firmware: list[str] = Field(default=[], description="Firmware paths relative to the project root.")
     force: bool = Field(default=False, description="Commit even if the ESP32 check fails.")
+    serial: ClientSerialReadings | None = Field(default=None, description=CLIENT_SERIAL_FIELD)
 
 
 class CommitResponse(BaseModel):
@@ -363,10 +365,13 @@ def scan(request: ScanRequest, project: ProjectDep, http: Request) -> ScanRespon
         reading = read_board(
             project.camera_index(request.camera), Path(request.image) if request.image else None, project.calibration_dir
         )
-    serial = snapshot_for(http.app, project)  # None when there's no ESP32 (connects if needed)
-    observations = project.scan(reading, sync=request.sync, serial=serial.readings() if serial else None)
+    # The browser's readings first (hosted backend, ESP32 on the user's laptop), else the server's own
+    # ESP32 (local `benchlog serve`), else camera-only.
+    readings = readings_for(http.app, project, request.serial)
+    serial = SerialSnapshot.from_readings(readings) if readings else None
+    observations = project.scan(reading, sync=request.sync, serial=readings)
     check = project.check_with_serial(
-        observations, serial.probe.pins if serial else None, serial.i2c.devices if serial else None
+        observations, readings.pins if readings else None, readings.i2c if readings else None
     )
     return ScanResponse(
         source=reading.source, warnings=reading.warnings, observations=observations, serial=serial, reconciliation=check
@@ -408,11 +413,11 @@ def edit(obs_id: str, request: EditRequest, project: ProjectDep) -> Observation:
 @app.post("/api/commit")
 def commit(request: CommitRequest, project: ProjectDep, http: Request) -> CommitResponse:
     """Check the circuit against the board through the ESP32 first; a failure blocks unless `force`."""
-    serial = snapshot_for(http.app, project)  # None when there's no ESP32 (connects if needed)
+    readings = readings_for(http.app, project, request.serial)  # the browser's, else the server's ESP32
     check = project.hardware_check(
-        serial.probe.pins if serial else None,
-        serial.i2c.devices if serial else None,
-        reason=None if serial else "serial agent not connected",
+        readings.pins if readings else None,
+        readings.i2c if readings else None,
+        reason=None if readings else "no ESP32 connected (connect it from the browser)",
     )
     if check.status == "failed" and not request.force:
         raise ProjectError("ESP32 check failed, so nothing was committed: " + " ".join(check.problems))

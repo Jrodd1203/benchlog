@@ -316,3 +316,162 @@ def test_status_works_outside_a_project(service: SerialService, monkeypatch: pyt
         assert TestClient(app).get("/api/serial/status").json()["connected"] is False
     finally:
         app.state.serial = None
+
+
+# ── Readings from the browser (Web Serial) in the scan request ──
+
+
+def _gnd18_scan(client, serial: dict | None = None):
+    import json
+    from pathlib import Path
+
+    circuit = json.loads((Path(__file__).parent.parent / "examples" / "circuits" / "working.json").read_text())
+    circuit["wires"].append({"id": "w7", "a": "J7", "b": "R-7"})  # GPIO18 (I7's row) to GND
+    body = {"simulate": circuit} | ({"serial": serial} if serial is not None else {})
+    return client.post("/api/scan", json=body)
+
+
+BROWSER = {
+    "probed_at": "2026-09-27T12:00:00.000Z",
+    "port": "browser (USB 10c4:ea60)",
+    "agent": "0.1.0",
+    "pins": {"4": "floating", "18": "pulled_low", "19": "floating"},
+    "i2c": [],
+}
+
+
+def test_scan_uses_readings_from_the_browser(api_project, service: SerialService, monkeypatch: pytest.MonkeyPatch):
+    from benchlog.serial import service as service_module
+
+    project, client = api_project
+    monkeypatch.setattr(service_module, "find_esp32_port", lambda: "/dev/cu.usbserial-0001")  # would be used otherwise
+    data = _gnd18_scan(client, BROWSER).json()
+    assert data["serial"]["port"] == "browser (USB 10c4:ea60)"
+    assert data["reconciliation"]["serial_checked"] is True
+    assert [v["verdict"] for v in data["reconciliation"]["proposals"]] == ["confirmed"]
+    assert not service.status().connected  # the server's own port was never touched
+    assert project.serial_readings().port == "browser (USB 10c4:ea60)"  # kept for accept -> circuit.serial
+
+
+def test_browser_readings_without_i2c_stay_unscanned(api_project):
+    project, client = api_project
+    _gnd18_scan(client, {k: v for k, v in BROWSER.items() if k != "i2c"})
+    assert project.serial_readings().i2c is None  # "not scanned", not "nothing answered"
+
+
+def test_scan_falls_back_to_the_servers_esp32(api_project, service: SerialService, monkeypatch: pytest.MonkeyPatch):
+    from benchlog.serial import service as service_module
+
+    _, client = api_project
+    monkeypatch.setattr(service_module, "find_esp32_port", lambda: "/dev/cu.usbserial-0001")
+    data = _gnd18_scan(client).json()
+    assert data["serial"]["port"] == "/dev/cu.usbserial-0001" and data["reconciliation"]["serial_checked"] is True
+
+
+def test_scan_with_neither_is_camera_only(api_project):
+    _, client = api_project  # conftest: no ESP32 detected on the server
+    data = _gnd18_scan(client).json()
+    assert data["serial"] is None and data["reconciliation"]["serial_checked"] is False
+    assert [v["verdict"] for v in data["reconciliation"]["proposals"]] == ["not_checked"]
+
+
+@pytest.mark.parametrize(
+    "serial",
+    [
+        {**BROWSER, "pins": {"18": "banana"}},  # not a pin state
+        {**BROWSER, "pins": {"GPIO18": "floating"}},  # not a GPIO number
+        {**BROWSER, "pins": ["floating"]},  # not a map
+        {k: v for k, v in BROWSER.items() if k != "probed_at"},  # missing timestamp
+        {**BROWSER, "i2c": "0x76"},  # not a list
+    ],
+)
+def test_malformed_browser_readings_are_rejected(api_project, serial: dict):
+    project, client = api_project
+    response = _gnd18_scan(client, serial)
+    assert response.status_code == 422
+    assert "serial" in str(response.json()["detail"])
+    assert project.pending_observations() == []  # nothing was scanned
+
+
+# ── Browser readings for commits and checks (hosted backend) ──
+
+
+def _ground_gpio18(client) -> None:
+    """Edit the working circuit (as the UI would) to add a wire from GPIO18 to GND."""
+    circuit = client.get("/api/circuit").json()
+    circuit["wires"].append({"id": "w7", "a": "J7", "b": "R-7"})
+    assert client.put("/api/circuit", json=circuit).status_code == 200
+
+
+def _readings(gpio18: str) -> dict:
+    return {**BROWSER, "pins": {"4": "floating", "18": gpio18, "19": "floating"}}
+
+
+def test_commit_checks_the_browsers_readings(api_project, service: SerialService, monkeypatch: pytest.MonkeyPatch):
+    from benchlog.serial import service as service_module
+
+    project, client = api_project
+    monkeypatch.setattr(service_module, "find_esp32_port", lambda: "/dev/cu.usbserial-0001")  # must not be used
+    _ground_gpio18(client)
+    response = client.post("/api/commit", json={"message": "Ground GPIO18", "serial": _readings("pulled_low")})
+    assert response.status_code == 200, response.json()
+    assert response.json()["hardware"]["status"] == "passed"
+    assert "ESP32-Check: passed" in project.repo.run("log", "-1", "--format=%B")
+    assert not service.status().connected
+
+
+def test_commit_is_blocked_by_the_browsers_readings(api_project):
+    project, client = api_project
+    _ground_gpio18(client)
+    head = project.repo.head()
+    blocked = client.post("/api/commit", json={"message": "Ground GPIO18", "serial": _readings("floating")})
+    assert blocked.status_code == 400
+    assert "GPIO18 should read pulled_low (tied to GND) but reads floating" in blocked.json()["detail"]
+    assert project.repo.head() == head  # nothing committed
+
+    forced = client.post("/api/commit", json={"message": "Ground GPIO18", "serial": _readings("floating"), "force": True})
+    assert forced.json()["hardware"]["status"] == "failed"
+    assert "ESP32-Check: failed (forced)" in project.repo.run("log", "-1", "--format=%B")
+
+
+def test_commit_without_any_esp32_is_skipped(api_project):
+    project, client = api_project
+    _ground_gpio18(client)
+    hardware = client.post("/api/commit", json={"message": "Ground GPIO18"}).json()["hardware"]
+    assert hardware["status"] == "skipped" and "connect it from the browser" in hardware["reason"]
+
+
+def test_checks_use_the_browsers_readings(api_project):
+    _, client = api_project
+    _ground_gpio18(client)
+
+    def serial_check(body):
+        report = client.post("/api/checks/run", json=body).json()
+        return next(r for r in report["results"] if r["check"] == "serial_conflicts")
+
+    assert serial_check({"serial": _readings("pulled_low")})["status"] == "pass"
+    failing = serial_check({"serial": _readings("floating")})
+    assert failing["status"] == "fail" and failing["ids"] == ["esp32.GPIO18"]
+    assert serial_check({})["status"] == "not_supported"  # no readings anywhere: never a pass
+    assert client.post("/api/checks/run").status_code == 200  # a body is still optional
+
+
+def test_malformed_readings_on_commit_and_checks_are_rejected(api_project):
+    project, client = api_project
+    _ground_gpio18(client)
+    bad = {**BROWSER, "pins": {"18": "banana"}}
+    assert client.post("/api/commit", json={"message": "x", "serial": bad}).status_code == 422
+    assert client.post("/api/checks/run", json={"serial": bad}).status_code == 422
+    assert project.repo.run("log", "-1", "--format=%s").strip() == "Working circuit"
+
+
+def test_server_serial_off_leaves_the_port_to_the_browser(api_project, service: SerialService, monkeypatch: pytest.MonkeyPatch):
+    from benchlog.serial import service as service_module
+
+    _, client = api_project
+    monkeypatch.setenv("BENCHLOG_SERVER_SERIAL", "off")
+    monkeypatch.setattr(service_module, "find_esp32_port", lambda: "/dev/cu.usbserial-0001")
+    assert client.get("/api/serial/status").json()["connected"] is False  # the light doesn't grab the port
+    assert _gnd18_scan(client).json()["serial"] is None  # nor does a scan without browser readings
+    assert _gnd18_scan(client, BROWSER).json()["reconciliation"]["serial_checked"] is True  # browser readings work
+    assert not service.status().connected

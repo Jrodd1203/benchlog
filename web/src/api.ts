@@ -7,6 +7,7 @@
 import movedWireExample from './examples/circuits/moved-wire.json'
 import workingExample from './examples/circuits/working.json'
 import { stripOf } from './board/geometry'
+import { getEsp32, takeReadings } from './serial/esp32'
 import { BUILD_STAGES } from './mock/buildStages'
 import type {
   AcceptResponse,
@@ -77,6 +78,12 @@ export async function request<T>(method: string, path: string, body?: unknown): 
     try {
       const data = await res.json()
       if (typeof data?.detail === 'string') detail = data.detail
+      // 422 validation errors: [{loc: ["body", "simulate"], msg: "..."}, ...]
+      else if (Array.isArray(data?.detail) && data.detail.length > 0) {
+        detail = data.detail
+          .map((e: { loc?: unknown[]; msg?: string }) => `${(e.loc ?? []).filter((p) => p !== 'body').join('.')}: ${e.msg ?? 'invalid'}`)
+          .join('; ')
+      }
     } catch {
       // not JSON (e.g. the dev proxy's 502 page); keep the generic message
     }
@@ -121,7 +128,12 @@ export const getStatus = () => getJson<StatusResponse>('/api/status')
 
 /** POST /api/scan. `simulate` pretends the board looks like that circuit (no camera needed). */
 export async function scan(options: { simulate?: Circuit } = {}): Promise<ScanResponse> {
-  const result = await request<ScanResponse>('POST', '/api/scan', options)
+  // A hosted backend can't reach the ESP32 on this laptop, so if the browser is connected to it
+  // (Web Serial) we probe it here and send the readings with the scan. Otherwise the server uses its
+  // own ESP32 (local `benchlog serve`) or scans camera-only.
+  const { readings, error } = await takeReadings()
+  const result = await request<ScanResponse>('POST', '/api/scan', readings ? { ...options, serial: readings } : options)
+  if (error) result.warnings = [...result.warnings, `serial: not checked (${error})`]
   saveLastScan(result)
   return result
 }
@@ -150,9 +162,15 @@ export const rejectObservations = (ids?: string[]) =>
 export const editObservation = (id: string, ends: Partial<Record<'a' | 'b', Hole>>) =>
   request<Observation>('PATCH', `/api/observations/${encodeURIComponent(id)}`, { ends })
 
-/** With `force`, commits even if the ESP32 check fails (recorded as "ESP32-Check: failed (forced)"). */
-export const commit = (message: string, force = false) =>
-  request<CommitResponse>('POST', '/api/commit', { message, force })
+/**
+ * The server checks the circuit against the ESP32 before committing. If this browser is connected to
+ * the ESP32 (Web Serial), its readings are sent along, since a hosted server can't reach it. With
+ * `force`, commits even if the check fails (recorded as "ESP32-Check: failed (forced)").
+ */
+export async function commit(message: string, force = false): Promise<CommitResponse> {
+  const { readings } = await takeReadings()
+  return request<CommitResponse>('POST', '/api/commit', { message, force, ...(readings ? { serial: readings } : {}) })
+}
 
 /** GET /api/diff. Omit `old` for HEAD, omit `new` for the working circuit. */
 export function getDiff(old?: string, next?: string): Promise<DiffResponse> {
@@ -368,4 +386,12 @@ export async function markCheckpoint(sha: string, label: string, note = ''): Pro
 
 export async function unmarkCheckpoint(sha: string): Promise<void> {
   await request('DELETE', `/api/commits/${sha}/checkpoint`)
+}
+
+// Dev only: hand the browser console this module as the app itself uses it (same open project and
+// same ESP32 connection), e.g. to test a scan without a camera:
+//   const c = (await benchlog.getCircuit()).data; c.wires.push({ id: 'w9', a: 'J7', b: 'R-7' })
+//   await benchlog.scan({ simulate: c })
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  Object.assign(window, { benchlog: { getCircuit, scan, acceptObservations, rejectObservations, commit, esp32: getEsp32 } })
 }

@@ -11,7 +11,7 @@ from typing import Callable
 
 from pydantic import BaseModel, Field
 
-from benchlog.core.reconcile import SerialReadings
+from benchlog.core.reconcile import I2C_SCL, I2C_SDA, SerialReadings
 from benchlog.serial.agent_client import AgentClient, AgentDisconnected, AgentError, I2cResult, ProbeResult
 
 PING_INTERVAL = 5.0
@@ -43,6 +43,16 @@ class SerialSnapshot(BaseModel):
         """The raw readings, as the core saves them with a scan."""
         return SerialReadings(
             probed_at=self.probe.taken_at, port=self.port, agent=self.agent, pins=self.probe.pins, i2c=self.i2c.devices
+        )
+
+    @classmethod
+    def from_readings(cls, readings: SerialReadings) -> "SerialSnapshot":
+        """A snapshot for readings taken elsewhere (e.g. by the browser over Web Serial)."""
+        return cls(
+            port=readings.port or "browser",
+            agent=readings.agent,
+            probe=ProbeResult(taken_at=readings.probed_at, pins=readings.pins),
+            i2c=I2cResult(taken_at=readings.probed_at, sda=I2C_SDA, scl=I2C_SCL, devices=readings.i2c or []),
         )
 
 

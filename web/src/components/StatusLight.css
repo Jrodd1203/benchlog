@@ -1,0 +1,22 @@
+/* Status light + "Connect ESP32" (Web Serial). */
+
+.status-light-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.btn.small {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+}
+
+.notice-inline {
+  font-size: 0.8rem;
+  max-width: 28rem;
+}
+
+.notice-inline.error {
+  color: var(--bad);
+}
