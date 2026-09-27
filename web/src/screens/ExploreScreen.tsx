@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchRemoteCircuitAt, fetchRemoteHistory, parseRepo } from '../api'
+import { fetchCommunityRepos, fetchRemoteCircuitAt, fetchRemoteHistory, parseRepo } from '../api'
 import { Breadboard } from '../board/Breadboard'
 import type { Circuit, RemoteCommit, RemoteRepo } from '../types'
 
@@ -72,6 +72,11 @@ type ViewState =
 export function ExploreScreen() {
   const [view, setView] = useState<ViewState>({ kind: 'list' })
   const [recent, setRecent] = useState<RemoteRepo[]>(loadRecent)
+  const [community, setCommunity] = useState<RemoteRepo[] | null>(null)
+
+  useEffect(() => {
+    fetchCommunityRepos().then(setCommunity)
+  }, [])
 
   const openRepo = async (repo: RemoteRepo) => {
     setRecent((current) => saveRecent(repo, current))
@@ -99,7 +104,7 @@ export function ExploreScreen() {
   }, [])
 
   if (view.kind === 'list') {
-    return <RepoList repos={REPOS} recent={recent} onOpen={openRepo} onOpenByName={(o, r) => openRepo(repoFromName(o, r))} />
+    return <RepoList repos={REPOS} recent={recent} community={community} onOpen={openRepo} onOpenByName={(o, r) => openRepo(repoFromName(o, r))} />
   }
   if (view.kind === 'loading') return <LoadingPane label={`Loading ${view.repo.label}…`} onBack={back} />
   if (view.kind === 'error') return <ErrorPane repo={view.repo} message={view.message} onBack={back} />
@@ -111,16 +116,21 @@ export function ExploreScreen() {
 function RepoList({
   repos,
   recent,
+  community,
   onOpen,
   onOpenByName,
 }: {
   repos: RemoteRepo[]
   recent: RemoteRepo[]
+  community: RemoteRepo[] | null
   onOpen: (r: RemoteRepo) => void
   onOpenByName: (owner: string, repo: string) => void
 }) {
   const [input, setInput] = useState('')
   const [inputError, setInputError] = useState<string | null>(null)
+
+  const featured = new Set(repos.map((r) => `${r.owner}/${r.repo}`.toLowerCase()))
+  const communityOnly = (community ?? []).filter((r) => !featured.has(`${r.owner}/${r.repo}`.toLowerCase()))
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -155,9 +165,19 @@ function RepoList({
         <>
           <h2 className="explore-section">Recently opened</h2>
           <div className="explore-grid">{recent.map((r) => <RepoCard key={`${r.owner}/${r.repo}`} repo={r} onOpen={onOpen} />)}</div>
-          <h2 className="explore-section">Featured</h2>
         </>
       )}
+      <h2 className="explore-section">Community builds</h2>
+      {community === null ? (
+        <p className="muted">Looking for builds…</p>
+      ) : communityOnly.length === 0 ? (
+        <p className="muted">
+          None yet. Publish yours with <code>benchlog push --create my-circuit</code>
+        </p>
+      ) : (
+        <div className="explore-grid">{communityOnly.map((r) => <RepoCard key={`${r.owner}/${r.repo}`} repo={r} onOpen={onOpen} />)}</div>
+      )}
+      <h2 className="explore-section">Featured</h2>
       <div className="explore-grid">
         {repos.map((r) => <RepoCard key={`${r.owner}/${r.repo}`} repo={r} onOpen={onOpen} />)}
       </div>

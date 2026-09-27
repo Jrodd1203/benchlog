@@ -96,6 +96,20 @@ class Repo:
             args += ["--", self._rel(path)]
         return bool(self.run(*args).strip())
 
+    def remote_url(self, name: str = "origin") -> str | None:
+        """The URL remote `name` was given (as configured), or None if there is no such remote."""
+        try:
+            return self.run("config", "--get", f"remote.{name}.url").strip()
+        except GitError:
+            return None
+
+    def add_remote(self, url: str, name: str = "origin") -> None:
+        self.run("remote", "add", name, url)
+
+    def push(self, branch: str, remote: str = "origin") -> None:
+        """Push `branch` and make it track the remote's copy (`git push -u`)."""
+        self.run("push", "--quiet", "-u", remote, branch)
+
     def _rel(self, path: Path) -> str:
         path = path if path.is_absolute() else self.root / path
         return path.resolve().relative_to(self.root).as_posix()

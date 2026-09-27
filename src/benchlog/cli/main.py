@@ -2,6 +2,7 @@
 
 import functools
 import json
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from benchlog.core.numbering import describe_numbering, first_row_for, from_prin
 from benchlog.core.models import Circuit, Observation, ObservationKind
 from benchlog.core.project import CIRCUIT_PATH, HardwareCheck, Project, ProjectError
 from benchlog.demo import DEFAULT_WORKSPACE
+from benchlog.core.remote import SITE_ENV, TOPIC, RemoteError, create_github_repo, github_slug, site_link, tag_github_repo
 from benchlog.core.repo import GitError
 from benchlog.camera import load_calibration, read_board
 from benchlog.core.reconcile import Reconciliation
@@ -445,7 +447,70 @@ def log(limit: int | None = typer.Option(None, "-n", help="Show at most this man
     Console().print(table)
 
 
-serial_app = typer.Typer(help="Set up the ESP32 serial agent that double-checks what the camera sees.")
+@app.command()
+@_handle_errors
+def push(
+    url: str | None = typer.Argument(None, help="The first time: the empty GitHub repo to publish to."),
+    create: str | None = typer.Option(None, "--create", help="Create a public GitHub repo with this name (needs `gh`)."),
+) -> None:
+    """Publish your commits to GitHub, where the web UI's Explore screen can open them.
+
+    Only commits are pushed: pending scans and uncommitted circuit changes stay on this machine.
+    """
+    project = Project.find()
+    repo = project.repo
+    if url and create:
+        raise ProjectError("give a repo URL or --create NAME, not both")
+    if not project.history():
+        raise ProjectError("nothing to push yet: commit the circuit first (`benchlog commit -m ...`)")
+    branch = repo.current_branch()
+    if not branch:
+        raise ProjectError("not on a branch; `benchlog checkout` one first")
+
+    origin = repo.remote_url()
+    if (url or create) and origin:
+        if url and url.rstrip("/") == origin.rstrip("/"):
+            url = None  # already connected there
+        else:
+            raise ProjectError(f"this project is already connected to {origin}; run `benchlog push` to push there")
+    if url:
+        repo.add_remote(url)
+    elif create:
+        try:
+            create_github_repo(repo.root, create)
+        except RemoteError as e:
+            raise ProjectError(str(e)) from e
+    origin = repo.remote_url()
+    if origin is None:
+        raise ProjectError(
+            "this project isn't on GitHub yet. Create an empty public repo on github.com and run "
+            "`benchlog push <its URL>`, or let benchlog create it: `benchlog push --create NAME`"
+        )
+
+    if project.pending_observations() or not project.matches_head():
+        print("[yellow]note:[/yellow] only commits are pushed; the uncommitted circuit changes stay here")
+    repo.push(branch)
+    print(f"[green]pushed[/green] {escape(branch)} to {escape(origin)}")
+
+    slug = github_slug(origin)
+    if slug is None:
+        return
+    if url or create:  # just connected: tag it so Explore's community list finds it
+        try:
+            tag_github_repo(repo.root, slug)
+            print(f"  tagged {TOPIC}: it's listed in Explore's community builds")
+        except RemoteError:
+            print(f"  [dim]add the topic {TOPIC} to the repo on GitHub to list it in Explore's community builds[/dim]")
+    link = site_link(slug, os.environ.get(SITE_ENV))
+    if link:
+        print(f"  open it: {link}")
+    else:
+        print(f"  open it on the site: Explore → {slug}  (set {SITE_ENV} to get a direct link)")
+    if branch not in ("main", "master"):
+        print(f"  [dim]Explore shows the repo's default branch; {escape(branch)} shows up there once merged[/dim]")
+
+
+serial_app =typer.Typer(help="Set up the ESP32 serial agent that double-checks what the camera sees.")
 app.add_typer(serial_app, name="serial")
 
 
