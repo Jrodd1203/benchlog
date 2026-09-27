@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import './App.css'
 import { setActiveProject } from './api'
+import { ChecksScreen } from './screens/ChecksScreen'
 import { CommitsScreen } from './screens/CommitsScreen'
 import { DiffScreen } from './screens/DiffScreen'
 import { ProjectsScreen } from './screens/ProjectsScreen'
+import { PullRequestsScreen } from './screens/PullRequestsScreen'
 import { ReviewScreen } from './screens/ReviewScreen'
 import { SerialScreen } from './screens/SerialScreen'
 import { SetupScreen } from './screens/SetupScreen'
@@ -13,12 +15,17 @@ import { TimelineScreen } from './screens/TimelineScreen'
 import { WorkspaceScreen } from './screens/WorkspaceScreen'
 import type { ProjectSummary } from './types'
 
-type Screen = 'projects' | 'setup' | 'workspace' | 'review' | 'commits' | 'timeline' | 'diff' | 'serial' | StubId
+type Screen =
+  | 'projects' | 'setup' | 'workspace' | 'review' | 'commits' | 'timeline' | 'diff' | 'serial' | 'checks' | 'prs' | StubId
 
 /** Tabs shown once a project is open — only built screens. */
 const TABS: { id: Exclude<Screen, 'projects'>; label: string }[] = [
   { id: 'workspace', label: 'Workspace' },
   { id: 'timeline', label: 'Timeline' },
+  { id: 'diff', label: 'Diff' },
+  { id: 'serial', label: 'Serial' },
+  { id: 'checks', label: 'Checks' },
+  { id: 'prs', label: 'Branches & PRs' },
   { id: 'setup', label: 'Setup' },
 ]
 
@@ -80,6 +87,8 @@ export default function App() {
       {screen === 'timeline' && <TimelineScreen />}
       {screen === 'diff' && <DiffScreen />}
       {screen === 'serial' && <SerialScreen />}
+      {screen === 'checks' && <ChecksScreen />}
+      {screen === 'prs' && <PullRequestsScreen />}
       {screen in STUBS && <StubScreen section={STUBS[screen as StubId]} />}
     </div>
   )
