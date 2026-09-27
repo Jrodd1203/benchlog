@@ -197,7 +197,7 @@ def preview(cap: cv2.VideoCapture, calibration=None, window: str = "benchlog cam
                         holes, outline, matrix, lock_status = None, None, None, f"lock lost: {e}"
                 steady = tracker.update(frame, calibration.corners, now, fixed=True)
             if holes is not None:
-                draw_holes(display, holes)
+                draw_holes(display, holes, first_row=calibration.first_row)
             if calibration is not None and holes is None:
                 status, color = "board not locked", (0, 0, 255)
             elif outline is None:

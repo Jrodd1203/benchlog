@@ -195,6 +195,16 @@ def _project_summary(project: Project) -> ProjectSummary:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
+class NumberingResponse(BaseModel):
+    first_row: int = Field(description="The number printed on the board's first row. Hole names in the API are "
+                           "always A1..J63; show row N as N + first_row - 1 to match the board.")
+
+
+@app.get("/api/numbering")
+def numbering(project: ProjectDep) -> NumberingResponse:
+    return NumberingResponse(first_row=project.first_row())
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}

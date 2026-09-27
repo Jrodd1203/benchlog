@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 
 import typer
-from rich import print
+from rich import print as _rich_print
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
@@ -18,6 +18,7 @@ from benchlog.core.checks.store import check_project
 from benchlog.core.diff import CircuitDiff, describe
 from benchlog.core.diff import diff as circuit_diff
 from benchlog.core.netlist import natural_key
+from benchlog.core.numbering import from_printed, to_printed
 from benchlog.core.models import Circuit, Observation, ObservationKind
 from benchlog.core.project import CIRCUIT_PATH, HardwareCheck, Project, ProjectError
 from benchlog.demo import DEFAULT_WORKSPACE
@@ -26,6 +27,26 @@ from benchlog.camera import load_calibration, read_board
 from benchlog.core.reconcile import Reconciliation
 from benchlog.core.scan import BoardReading, reading_from_circuit
 from benchlog.serial.service import SerialSnapshot
+
+def _first_row() -> int:
+    """The number printed on this project's board's first row (1 unless set to 0)."""
+    return _first_row_in(str(Path.cwd()))
+
+
+@functools.lru_cache(maxsize=8)
+def _first_row_in(folder: str) -> int:
+    try:
+        return Project.find(Path(folder)).first_row()
+    except (ProjectError, GitError):
+        return 1
+
+
+def print(*objects, **kwargs) -> None:  # noqa: A001 - every line shows hole numbers as printed on the board
+    first_row = _first_row()
+    if first_row != 1:
+        objects = tuple(to_printed(o, first_row) if isinstance(o, str) else o for o in objects)
+    _rich_print(*objects, **kwargs)
+
 
 app = typer.Typer(help="Version control for breadboard prototypes.", no_args_is_help=True)
 
@@ -316,7 +337,7 @@ def edit(
         if key in ("type", "value", "model"):
             suggestion[key] = value
         else:
-            ends[key] = value.upper()
+            ends[key] = from_printed(value, _first_row())  # typed as printed on the board
     _print_observations([Project.find().edit_observation(obs_id, ends, suggestion)])
 
 
@@ -540,6 +561,17 @@ def camera_preview(index: int | None = typer.Argument(None, help="Camera index (
         raise ProjectError(str(e)) from e
 
 
+@camera_app.command("numbering")
+@_handle_errors
+def camera_numbering(first_row: int = typer.Argument(..., help="The number printed on your board's first row: 1 or 0.")) -> None:
+    """Show and accept hole numbers as printed on your board (some boards start counting at 0)."""
+    if first_row not in (0, 1):
+        raise ProjectError("the first row is numbered 1 (most boards) or 0")
+    Project.find().set_config("first_row", first_row)
+    _first_row_in.cache_clear()
+    print(f"hole numbers now match a board whose first row is printed as {first_row}")
+
+
 @camera_app.command("calibrate")
 @_handle_errors
 def camera_calibrate(
@@ -564,7 +596,7 @@ def camera_calibrate(
     try:
         cap = camera.open_camera(index)
         try:
-            calibration = run_calibration(cap, camera=index, occupied=occupied)
+            calibration = run_calibration(cap, camera=index, occupied=occupied, first_row=project.first_row())
         finally:
             cap.release()
     except camera.CameraError as e:
@@ -574,6 +606,8 @@ def camera_calibrate(
         return
     calibration.save(project.calibration_dir)
     project.set_config("camera", index)
+    project.set_config("first_row", calibration.first_row)
+    _first_row_in.cache_clear()
     # The board as calibrated is the new starting point for scans.
     source = "calibration (board matching circuit)" if board_matches_circuit else "calibration (empty board)"
     project.scans.reset(BoardReading(occupied=occupied, source=source))

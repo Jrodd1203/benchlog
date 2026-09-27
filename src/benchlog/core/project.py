@@ -165,6 +165,10 @@ class Project:
         path.parent.mkdir(exist_ok=True)
         path.write_text(json.dumps({**self.config(), key: value}, indent=2, sort_keys=True) + "\n")
 
+    def first_row(self) -> int:
+        """The number printed on the board's first row: 1 (benchlog's own numbering) or 0."""
+        return int(self.config().get("first_row", 1))
+
     def camera_index(self, override: int | None = None) -> int:
         """The camera to scan with: an explicit override, else the saved one, else 0."""
         return override if override is not None else int(self.config().get("camera", 0))
