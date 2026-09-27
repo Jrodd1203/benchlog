@@ -133,8 +133,17 @@ class AcceptResponse(BaseModel):
     changes: DiffResponse = Field(description="What accepting changed in the working circuit.")
 
 
+class SuggestionEdit(BaseModel):
+    type: str | None = Field(default=None, description="Component type, e.g. 'resistor'.")
+    value: str | None = Field(default=None, description="e.g. '220Ω', '100nF', 'red'.")
+    model: str | None = Field(default=None, description="Part number, e.g. '2N2222', 'BME280'.")
+
+
 class EditRequest(BaseModel):
-    ends: dict[str, Hole] = Field(description='Wire ends to set, e.g. {"b": "J45"}.')
+    ends: dict[str, Hole] = Field(
+        default={}, description='Wire ends ({"b": "J45"}) or component pins ({"anode": "E18"}) to set.'
+    )
+    suggested: SuggestionEdit | None = Field(default=None, description="For a component: what it is.")
 
 
 class CommitRequest(BaseModel):
@@ -333,8 +342,9 @@ def reject(request: IdsRequest, project: ProjectDep) -> list[Observation]:
 
 @app.patch("/api/observations/{obs_id}")
 def edit(obs_id: str, request: EditRequest, project: ProjectDep) -> Observation:
-    """Set or correct a pending wire's ends before accepting it."""
-    return project.edit_observation(obs_id, {k: v.strip().upper() for k, v in request.ends.items()})
+    """Correct a pending observation before accepting it: wire ends, component pins, or what a part is."""
+    suggestion = request.suggested.model_dump(exclude_none=True) if request.suggested else None
+    return project.edit_observation(obs_id, {k: v.strip().upper() for k, v in request.ends.items()}, suggestion)
 
 
 @app.post("/api/commit")

@@ -17,6 +17,7 @@ from benchlog.core.branches import BoardReport, board_report, checkout as checko
 from benchlog.core.checks.store import check_project
 from benchlog.core.diff import CircuitDiff, describe
 from benchlog.core.diff import diff as circuit_diff
+from benchlog.core.netlist import natural_key
 from benchlog.core.models import Circuit, Observation, ObservationKind
 from benchlog.core.project import CIRCUIT_PATH, HardwareCheck, Project, ProjectError
 from benchlog.demo import DEFAULT_WORKSPACE
@@ -92,6 +93,13 @@ def init(board: str = typer.Option("bb830", help="Breadboard template id.")) -> 
 
 def _describe_observation(o: Observation) -> str:
     before, after = o.before or {}, o.after or {}
+    if o.object_type == "component" and o.kind == ObservationKind.ADDED:
+        holes = sorted(after.values(), key=natural_key)
+        what = o.suggested.type.value if o.suggested and o.suggested.type else "unknown part (say what it is: type=...)"
+        extras = ", ".join(x for x in (o.suggested.model, o.suggested.value) if x) if o.suggested else ""
+        where = f"{len(holes)} pins, {holes[0]}..{holes[-1]}" if len(holes) > 3 else ", ".join(holes)
+        text = f"{o.id}  added component {o.object_id}: {what}{f' ({extras})' if extras else ''}, {where}  (confidence {o.confidence:.2f})"
+        return text + (f"  check {', '.join(o.uncertain_holes)}" if o.uncertain_holes else "")
     if o.kind == ObservationKind.MOVED:
         detail = ", ".join(f"{k} {before.get(k, '-')} → {after.get(k, '-')}" for k in after if before.get(k) != after.get(k))
     else:
@@ -294,16 +302,22 @@ def reject(
 @_handle_errors
 def edit(
     obs_id: str = typer.Argument(..., help="Observation id, e.g. obs2."),
-    ends: list[str] = typer.Argument(..., help="Wire ends to set, e.g. b=J40 (or a=A4 b=J40)."),
+    changes: list[str] = typer.Argument(
+        ..., help="Wire ends (b=J40), component pins (anode=E18), or what a part is (type=resistor value=220Ω)."
+    ),
 ) -> None:
-    """Set or correct a wire's ends before accepting it."""
-    parsed = {}
-    for item in ends:
-        end, sep, hole = item.partition("=")
-        if not sep or not hole:
-            raise ProjectError(f"expected END=HOLE like b=J40, got {item!r}")
-        parsed[end.strip()] = hole.strip().upper()
-    _print_observations([Project.find().edit_observation(obs_id, parsed)])
+    """Correct an observation before accepting it: wire ends, component pins, or what a part is."""
+    ends, suggestion = {}, {}
+    for item in changes:
+        key, sep, value = item.partition("=")
+        key, value = key.strip(), value.strip()
+        if not sep or not key or not value:
+            raise ProjectError(f"expected KEY=VALUE like b=J40 or type=resistor, got {item!r}")
+        if key in ("type", "value", "model"):
+            suggestion[key] = value
+        else:
+            ends[key] = value.upper()
+    _print_observations([Project.find().edit_observation(obs_id, ends, suggestion)])
 
 
 @app.command()

@@ -11,8 +11,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from benchlog.core.board import LEFT_COLUMNS, RIGHT_COLUMNS, TEMPLATES, BreadboardTemplate
-from benchlog.core.models import Circuit, Component, Hole, Observation, ObservationKind, ObservationStatus, Wire
+from benchlog.core.models import (
+    Circuit, Component, ComponentType, Hole, Observation, ObservationKind, ObservationStatus, Suggestion, Wire,
+)  # fmt: skip
 from benchlog.core.netlist import natural_key
+from benchlog.core.parts import esp32_devkit_v1_30_pins
 
 COLUMNS = LEFT_COLUMNS + RIGHT_COLUMNS
 # Confidence multipliers for guesses that need the user's eye.
@@ -112,6 +115,42 @@ def _straight_runs(holes: list[Hole]) -> list[list[Hole]]:
     return result
 
 
+MIN_ESP32_PINS = 24  # of 30: a few pins can be hidden by wires or misread and it's still an ESP32
+# (left pin column, right pin column) pairs an ESP32 DevKit can straddle the centre channel with.
+_ESP32_COLUMNS = (("A", "H"), ("B", "I"), ("C", "J"))
+
+
+def find_esp32s(filled: set[Hole], template: BreadboardTemplate) -> list[tuple[dict[str, Hole], set[Hole]]]:
+    """Where newly filled holes look like an ESP32 DevKit (30 pins, 15 per side, straddling the channel).
+
+    Returns each one's pin map and every filled hole it explains (pins plus the holes under the
+    board). Assumes the antenna end faces row 1: from the holes alone the two ends look the same.
+    """
+    found = []
+    for left, right in _ESP32_COLUMNS:
+        for top in range(1, template.rows - 13):
+            pins = esp32_devkit_v1_30_pins(top, left, right)
+            hits = sum(h in filled for h in pins.values())
+            if hits < MIN_ESP32_PINS:
+                continue
+            cols = COLUMNS[COLUMNS.index(left) : COLUMNS.index(right) + 1]
+            block = {f"{c}{r}" for c in cols for r in range(top, top + 15)} & filled
+            found.append((hits, len(block), pins, block))
+    # Best first; drop overlapping guesses (the same board seen one row or column off).
+    found.sort(key=lambda f: (-f[0], -f[1]))
+    result, claimed = [], set()
+    for _, _, pins, block in found:
+        if not claimed & block:
+            result.append((pins, block))
+            claimed |= block
+    return result
+
+
+def explained_by_footprints(filled: set[Hole], template: BreadboardTemplate) -> set[Hole]:
+    """Filled holes a recognized part accounts for (so they don't count as a flood of changes)."""
+    return set().union(*(block for _, block in find_esp32s(filled, template)))
+
+
 class _Pairer:
     def __init__(self, circuit: Circuit, changes: list[HoleChange]) -> None:
         self.circuit = circuit
@@ -134,6 +173,11 @@ class _Pairer:
         wires = {w.id: w for w in self.circuit.wires}
         components = {c.id: c for c in self.circuit.components}
         lost = sorted(self.lost.items(), key=lambda item: natural_key(item[0][1]))
+        # A new ESP32 claims its holes before anything else can pair them up as wires. If a known
+        # ESP32 lost its pins, it's more likely that one moved: the component-move logic handles it.
+        esp32_moving = any(components[i].type == ComponentType.ESP32_DEVKIT_V1_30 for t, i in self.lost if t == "component")
+        if not esp32_moving:
+            self._new_esp32s()
         # Single-end wire moves are the most common change, so they claim filled holes first.
         for (obj_type, obj_id), ends in lost:
             if obj_type == "wire" and len(ends) == 1:
@@ -155,9 +199,13 @@ class _Pairer:
         )  # fmt: skip
 
     def _candidates(self, near: Hole, color: str | None, exclude: set[Hole] = frozenset()) -> list[Hole]:
-        """Free holes that could be where a wire end went: same (or unknown) color, nearest first."""
-        options = [h for h in self.free if h not in exclude and _same_color(color, self.free[h].color) is not False]
-        return sorted(options, key=lambda h: (_same_color(color, self.free[h].color) is not True, _distance(near, h)))
+        """Free holes that could be where a wire end went: same color first, then unknown, then other
+        colors (the camera's color names can be slightly off, so they never rule a hole out), nearest first."""
+        def rank(h: Hole) -> tuple[int, float]:
+            same = _same_color(color, self.free[h].color)
+            return (0 if same else 1 if same is None else 2, _distance(near, h))
+
+        return sorted((h for h in self.free if h not in exclude), key=rank)
 
     def _is_certain(self, chosen: Hole, candidates: list[Hole], color: str | None) -> bool:
         if len(candidates) == 1:
@@ -216,6 +264,20 @@ class _Pairer:
                 self._add(ObservationKind.MOVED, "component", component.id, conf, before=before, after=after)
                 return
         self._add(ObservationKind.REMOVED, "component", component.id, confidence, before=before)
+
+    def _new_esp32s(self) -> None:
+        used = {c.id for c in self.circuit.components}
+        for pins, block in find_esp32s(set(self.free), self.template):
+            obj_id = next(i for i in (f"esp32{'' if n == 1 else f'_{n}'}" for n in count(1)) if i not in used)
+            used.add(obj_id)
+            confidence = min(self.free[h].confidence for h in block)
+            found = sum(h in self.free for h in pins.values()) / len(pins)
+            for hole in block:
+                del self.free[hole]
+            self._add(
+                ObservationKind.ADDED, "component", obj_id, confidence * found, after=pins,
+                suggested=Suggestion(type=ComponentType.ESP32_DEVKIT_V1_30, model="DOIT ESP32 DevKit V1"),
+            )  # fmt: skip
 
     def _flat_wires(self) -> None:
         """A straight run of 3+ neighbouring filled holes is one wire lying flat across them.
@@ -292,7 +354,16 @@ def apply_observations(circuit: Circuit, observations: list[Observation]) -> Cir
             else:
                 objs[index]["pins"] = dict(obs.after)
         elif obs.object_type == "component":
-            raise ValueError(f"{obs.id}: register the new component's type and value before accepting it")
+            if obs.suggested is None or obs.suggested.type is None:
+                raise ValueError(f"{obs.id}: say what this component is before accepting it (e.g. type=resistor)")
+            if index is not None:
+                raise ValueError(f"{obs.id}: there's already a component called {obs.object_id}")
+            objs.append(
+                {
+                    "id": obs.object_id, "type": obs.suggested.type, "model": obs.suggested.model,
+                    "value": obs.suggested.value, "pins": dict(obs.after or {}),
+                }
+            )  # fmt: skip
         elif set(obs.after or {}) != {"a", "b"}:
             raise ValueError(f"{obs.id}: the new wire's other end hasn't been confirmed")
         else:

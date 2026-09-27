@@ -14,9 +14,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from benchlog.core.board import TEMPLATES
 from benchlog.core.models import Circuit, Hole, Observation
 from benchlog.core.netlist import natural_key
-from benchlog.core.pairing import HoleChange, observations_from_occupancy, occupied_holes
+from benchlog.core.pairing import HoleChange, explained_by_footprints, observations_from_occupancy, occupied_holes
 
 
 # Nobody rewires this much between two scans; more changed holes than this means the camera misread
@@ -114,8 +115,11 @@ def scan(circuit: Circuit, store: ScanStore, reading: BoardReading, pending: lis
         store.promote_latest()
     reference = store.reference(circuit)
     changes = changes_between(reference, reading)
-    if len(changes) > MAX_PLAUSIBLE_HOLE_CHANGES:
-        raise MisreadError(len(changes))  # before saving, so a misread never becomes the reference
+    # A recognized part (an ESP32 covers ~120 holes) is one change, not a flood of them.
+    explained = explained_by_footprints({c.hole for c in changes if c.change == "filled"}, TEMPLATES[circuit.board])
+    unexplained = [c for c in changes if c.hole not in explained]
+    if len(unexplained) > MAX_PLAUSIBLE_HOLE_CHANGES:
+        raise MisreadError(len(unexplained))  # before saving, so a misread never becomes the reference
     observations = observations_from_occupancy(circuit, changes)
     store.save_latest(reading)
     return observations

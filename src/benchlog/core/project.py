@@ -22,7 +22,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from benchlog.core.board import TEMPLATES
 from benchlog.core.board_state import BoardStateStore, fingerprint
-from benchlog.core.models import Circuit, Hole, Observation, ObservationKind, ObservationStatus
+from benchlog.core.models import Circuit, ComponentType, Hole, Observation, ObservationKind, ObservationStatus, Suggestion
 from benchlog.core.pairing import apply_observations
 from benchlog.core.reconcile import Reconciliation, SerialReadings, reconcile, serial_record
 from benchlog.core.repo import Commit, GitError, Repo
@@ -266,22 +266,41 @@ class Project:
         if not self.pending_observations():
             self.board_confirmed()
 
-    def edit_observation(self, obs_id: str, ends: dict[str, Hole]) -> Observation:
-        """Set or correct wire ends of a pending added/moved wire, e.g. {"b": "J40"}.
+    def edit_observation(
+        self, obs_id: str, ends: dict[str, Hole] | None = None, suggestion: dict[str, str | None] | None = None
+    ) -> Observation:
+        """Correct a pending observation before accepting it.
 
-        The user has now looked at this wire, so the whole observation counts as confirmed.
+        Wires: set or correct ends, e.g. {"b": "J40"}. Components: set pins (e.g. {"anode": "E18"},
+        to fix polarity) and say what the part is: {"type": "resistor", "value": "220Ω"}.
+        The user has now looked at it, so the whole observation counts as confirmed.
         """
         observations, [obs] = self._select_pending([obs_id])
-        if obs.object_type != "wire" or obs.kind == ObservationKind.REMOVED:
-            raise ProjectError(f"{obs_id}: only added or moved wires can be edited")
-        bad_ends = set(ends) - {"a", "b"}
-        if bad_ends:
-            raise ProjectError(f"{obs_id}: a wire's ends are 'a' and 'b', not {', '.join(sorted(bad_ends))}")
+        ends, suggestion = ends or {}, suggestion or {}
+        if obs.kind == ObservationKind.REMOVED:
+            raise ProjectError(f"{obs_id}: a removal has nothing to edit; reject it if it's wrong")
+        if obs.object_type == "wire":
+            if suggestion:
+                raise ProjectError(f"{obs_id}: type, value and model are for components, not wires")
+            bad_ends = set(ends) - {"a", "b"}
+            if bad_ends:
+                raise ProjectError(f"{obs_id}: a wire's ends are 'a' and 'b', not {', '.join(sorted(bad_ends))}")
         template = TEMPLATES[self.load_circuit().board]
         bad_holes = [h for h in ends.values() if not template.is_valid(h)]
         if bad_holes:
             raise ProjectError(f"not a hole on {template.id}: {', '.join(bad_holes)}")
-        edited = obs.model_copy(update={"after": {**(obs.after or {}), **ends}, "uncertain_holes": [], "confidence": 1.0})
+        update: dict = {"after": {**(obs.after or {}), **ends}, "uncertain_holes": [], "confidence": 1.0}
+        if suggestion:
+            bad_keys = set(suggestion) - {"type", "value", "model"}
+            if bad_keys:
+                raise ProjectError(f"{obs_id}: can set type, value and model, not {', '.join(sorted(bad_keys))}")
+            merged = {**(obs.suggested.model_dump() if obs.suggested else {}), **suggestion}
+            try:
+                update["suggested"] = Suggestion.model_validate(merged)
+            except ValueError as e:
+                kinds = ", ".join(t.value for t in ComponentType)
+                raise ProjectError(f"{obs_id}: unknown component type {suggestion.get('type')!r} (one of: {kinds})") from e
+        edited = obs.model_copy(update=update)
         self.save_observations([edited if o.id == obs_id else o for o in observations])
         return edited
 
