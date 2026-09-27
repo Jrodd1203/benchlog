@@ -197,6 +197,24 @@ export interface CheckpointInfo {
   note?: string
 }
 
+/** A commit from a public GitHub repo's circuit history. */
+export interface RemoteCommit {
+  sha: string
+  shortSha: string
+  message: string
+  author: string
+  /** ISO 8601 */
+  date: string
+}
+
+/** A curated public repo entry for the Explore screen. */
+export interface RemoteRepo {
+  owner: string
+  repo: string
+  label: string
+  description: string
+}
+
 /** One commit on the timeline, oldest first. */
 export interface TimelineEntry {
   sha: string

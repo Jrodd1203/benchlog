@@ -4,6 +4,7 @@ import { setActiveProject } from './api'
 import { ChecksScreen } from './screens/ChecksScreen'
 import { CommitsScreen } from './screens/CommitsScreen'
 import { DiffScreen } from './screens/DiffScreen'
+import { ExploreScreen } from './screens/ExploreScreen'
 import { ProjectsScreen } from './screens/ProjectsScreen'
 import { PullRequestsScreen } from './screens/PullRequestsScreen'
 import { ReviewScreen } from './screens/ReviewScreen'
@@ -16,7 +17,7 @@ import { WorkspaceScreen } from './screens/WorkspaceScreen'
 import type { ProjectSummary } from './types'
 
 type Screen =
-  | 'projects' | 'setup' | 'workspace' | 'review' | 'commits' | 'timeline' | 'diff' | 'serial' | 'checks' | 'prs' | StubId
+  | 'projects' | 'explore' | 'setup' | 'workspace' | 'review' | 'commits' | 'timeline' | 'diff' | 'serial' | 'checks' | 'prs' | StubId
 
 /** Tabs shown once a project is open — only built screens. */
 const TABS: { id: Exclude<Screen, 'projects'>; label: string }[] = [
@@ -51,10 +52,16 @@ export default function App() {
         <button type="button" className="brand" onClick={backToProjects}>
           benchlog
         </button>
-        {project && screen !== 'projects' && (
+        {project && screen !== 'projects' && screen !== 'explore' && (
           <>
             <span className="crumb-sep">/</span>
             <span className="crumb current">{project.name}</span>
+          </>
+        )}
+        {screen === 'explore' && (
+          <>
+            <span className="crumb-sep">/</span>
+            <span className="crumb current">Explore</span>
           </>
         )}
       </nav>
@@ -75,7 +82,8 @@ export default function App() {
         </nav>
       )}
 
-      {screen === 'projects' && <ProjectsScreen onOpen={open} />}
+      {screen === 'projects' && <ProjectsScreen onOpen={open} onExplore={() => setScreen('explore')} />}
+      {screen === 'explore' && <ExploreScreen />}
       {screen === 'setup' && <SetupScreen onDone={() => setScreen('workspace')} />}
       {screen === 'workspace' && <WorkspaceScreen onReview={() => setScreen('review')} />}
       {screen === 'review' && (
