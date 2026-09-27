@@ -36,22 +36,22 @@
 /* Dark: the same pad under a lamp, deep green-grey with the same pencil blue. */
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #151d19;
-    --paper-grid: rgb(150 200 160 / 0.045);
-    --paper-grid-major: rgb(150 200 160 / 0.085);
-    --surface: #1c2621;
-    --surface-2: #24312b;
-    --border: #33443b;
-    --rule: #48604f;
-    --text: #e2eadf;
-    --muted: #98a99b;
+    --paper: #131313;
+    --paper-grid: rgb(255 255 255 / 0.025);
+    --paper-grid-major: rgb(255 255 255 / 0.05);
+    --surface: #1c1c1c;
+    --surface-2: #252525;
+    --border: #2e2e2e;
+    --rule: #404040;
+    --text: #e4e4e4;
+    --muted: #909090;
     --accent: #86ade6;
-    --accent-ink: #0f1713;
-    --accent-soft: rgb(134 173 230 / 0.16);
-    --ok: #62c07a;
+    --accent-ink: #0d0d0d;
+    --accent-soft: rgb(134 173 230 / 0.14);
+    --ok: #5bbf72;
     --bad: #ef6a5f;
     --warn: #e0a345;
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow: 0 1px 3px rgb(0 0 0 / 0.5);
     color-scheme: dark;
   }
 }
