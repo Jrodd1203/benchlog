@@ -208,18 +208,20 @@ const HERO_STEP_MS = 1600
 function HeroBoard() {
   const [entries, setEntries] = useState<TimelineEntry[]>([])
   const [index, setIndex] = useState(0)
-  const [boards, setBoards] = useState<{ circuit: Circuit; previous: Circuit | null } | null>(null)
+  const [allCircuits, setAllCircuits] = useState<Map<string, Circuit>>(new Map())
 
+  // Bulk-fetch all circuits once so the animation never stalls on a per-step API call.
   useEffect(() => {
     let alive = true
     getTimeline().then(({ data }) => {
       if (!alive) return
       setEntries(data)
       setIndex(data.length - 1)
+      Promise.all(data.map((e) => getCircuitAt(e.sha).then((c) => [e.sha, c] as const))).then((pairs) => {
+        if (alive) setAllCircuits(new Map(pairs))
+      })
     })
-    return () => {
-      alive = false
-    }
+    return () => { alive = false }
   }, [])
 
   useEffect(() => {
@@ -228,31 +230,19 @@ function HeroBoard() {
     return () => clearInterval(id)
   }, [entries.length])
 
-  useEffect(() => {
-    if (entries.length === 0) return
-    let alive = true
-    const prev = index > 0 ? entries[index - 1].sha : null
-    Promise.all([getCircuitAt(entries[index].sha), prev ? getCircuitAt(prev) : null]).then(([circuit, previous]) => {
-      if (alive) setBoards({ circuit, previous })
-    })
-    return () => {
-      alive = false
-    }
-  }, [entries, index])
-
   const entry = entries[index]
+  const circuit = entry ? allCircuits.get(entry.sha) : undefined
+  const previous = index > 0 ? allCircuits.get(entries[index - 1]?.sha) ?? null : null
+
   return (
     <figure className="hero-board">
-      <div className="board-frame">{boards && <Breadboard circuit={boards.circuit} previous={boards.previous} />}</div>
+      <div className="board-frame">
+        {circuit && <Breadboard circuit={circuit} previous={previous} />}
+      </div>
       {entry && (
         <figcaption>
-          <span>
-            <code>{entry.shortSha}</code>
-            {entry.message}
-          </span>
-          <span>
-            {index + 1} of {entries.length}
-          </span>
+          <code>{entry.shortSha}</code>
+          {entry.message}
         </figcaption>
       )}
     </figure>

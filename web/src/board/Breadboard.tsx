@@ -89,6 +89,12 @@ export function Breadboard({
     }
   }, [occupied, previous])
 
+  // Ghost wire paths: wires from `previous` whose endpoints were removed (i.e. the wire moved).
+  const ghostWires = useMemo(() => {
+    if (!previous) return []
+    return previous.wires.filter((w) => removed.has(w.a) || removed.has(w.b))
+  }, [previous, removed])
+
   const channelY = (columnY('E') + columnY('F')) / 2
   const labelRows = [1, ...Array.from({ length: 12 }, (_, i) => (i + 1) * 5)]
 
@@ -152,6 +158,17 @@ export function Breadboard({
         {circuit.components.map((c) => (
           <PartBody key={c.id} part={c} />
         ))}
+
+        {/* ghost wire paths: dashed red traces showing where moved wires came from */}
+        {ghostWires.map((w) => {
+          const a = holePosition(w.a)
+          const b = holePosition(w.b)
+          if (!a || !b) return null
+          const mx = (a.x + b.x) / 2
+          const my = (a.y + b.y) / 2 - Math.max(Math.abs(a.x - b.x) * 0.12, 1.2)
+          const d = `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`
+          return <path key={`ghost-${w.id}`} className="bb-wire-ghost" d={d} />
+        })}
 
         {/* removed: red ghosts */}
         {[...removed].map((h) => {
