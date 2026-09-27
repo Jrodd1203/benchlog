@@ -2,13 +2,7 @@
   "provider": "python",
   "steps": {
     "install": {
-      "inputs": [
-        {
-          "local": true,
-          "include": ["."]
-        }
-      ],
-      "commands": ["pip install -e '.[server]'"]
+      "commands": ["...", "pip install -e '.[server]'"]
     }
   },
   "deploy": {
