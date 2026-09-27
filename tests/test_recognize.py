@@ -151,6 +151,7 @@ def test_vivid_wire_with_a_plug_housing_is_a_wire() -> None:
 
 
 def test_wire_pieces_cut_by_the_board_edge_are_joined() -> None:
+    pytest.importorskip("cv2")  # the vision code; the core-only CI job runs without it
     from types import SimpleNamespace
 
     from benchlog.vision.parts import _join_halves
