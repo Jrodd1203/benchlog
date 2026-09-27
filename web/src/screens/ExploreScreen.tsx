@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchRemoteCircuitAt, fetchRemoteHistory } from '../api'
+import { fetchRemoteCircuitAt, fetchRemoteHistory, parseRepo } from '../api'
 import { Breadboard } from '../board/Breadboard'
 import type { Circuit, RemoteCommit, RemoteRepo } from '../types'
 
@@ -28,6 +28,37 @@ const REPOS: RemoteRepo[] = [
   },
 ]
 
+// ── Repos people opened by name (kept in this browser) ────────────────────────
+
+const RECENT_KEY = 'benchlog:explore:recent'
+const MAX_RECENT = 6
+
+function loadRecent(): RemoteRepo[] {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY)
+    return raw ? (JSON.parse(raw) as RemoteRepo[]) : []
+  } catch {
+    return []
+  }
+}
+
+function saveRecent(repo: RemoteRepo, current: RemoteRepo[]): RemoteRepo[] {
+  const same = (r: RemoteRepo) => `${r.owner}/${r.repo}`.toLowerCase() === `${repo.owner}/${repo.repo}`.toLowerCase()
+  if (REPOS.some(same)) return current // curated ones are always listed
+  const next = [repo, ...current.filter((r) => !same(r))].slice(0, MAX_RECENT)
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next))
+  } catch {
+    // storage unavailable: the list just won't survive a reload
+  }
+  return next
+}
+
+function repoFromName(owner: string, repo: string): RemoteRepo {
+  const known = REPOS.find((r) => `${r.owner}/${r.repo}`.toLowerCase() === `${owner}/${repo}`.toLowerCase())
+  return known ?? { owner, repo, label: repo, description: 'Opened by name' }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type ViewState =
@@ -40,8 +71,10 @@ type ViewState =
 
 export function ExploreScreen() {
   const [view, setView] = useState<ViewState>({ kind: 'list' })
+  const [recent, setRecent] = useState<RemoteRepo[]>(loadRecent)
 
   const openRepo = async (repo: RemoteRepo) => {
+    setRecent((current) => saveRecent(repo, current))
     setView({ kind: 'loading', repo })
     try {
       const commits = await fetchRemoteHistory(repo.owner, repo.repo)
@@ -58,7 +91,16 @@ export function ExploreScreen() {
 
   const back = () => setView({ kind: 'list' })
 
-  if (view.kind === 'list') return <RepoList repos={REPOS} onOpen={openRepo} />
+  // A shareable link opens a repo directly: ...?repo=owner/repo
+  useEffect(() => {
+    const wanted = parseRepo(new URLSearchParams(window.location.search).get('repo') ?? '')
+    if (wanted) openRepo(repoFromName(wanted.owner, wanted.repo))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  if (view.kind === 'list') {
+    return <RepoList repos={REPOS} recent={recent} onOpen={openRepo} onOpenByName={(o, r) => openRepo(repoFromName(o, r))} />
+  }
   if (view.kind === 'loading') return <LoadingPane label={`Loading ${view.repo.label}…`} onBack={back} />
   if (view.kind === 'error') return <ErrorPane repo={view.repo} message={view.message} onBack={back} />
   return <RemoteTimeline repo={view.repo} commits={view.commits} onBack={back} />
@@ -66,24 +108,71 @@ export function ExploreScreen() {
 
 // ── Repo list ─────────────────────────────────────────────────────────────────
 
-function RepoList({ repos, onOpen }: { repos: RemoteRepo[]; onOpen: (r: RemoteRepo) => void }) {
+function RepoList({
+  repos,
+  recent,
+  onOpen,
+  onOpenByName,
+}: {
+  repos: RemoteRepo[]
+  recent: RemoteRepo[]
+  onOpen: (r: RemoteRepo) => void
+  onOpenByName: (owner: string, repo: string) => void
+}) {
+  const [input, setInput] = useState('')
+  const [inputError, setInputError] = useState<string | null>(null)
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const parsed = parseRepo(input)
+    if (!parsed) {
+      setInputError('Enter owner/repo or a GitHub link, e.g. ctrl-alt-debrief/benchlog-pot-led')
+      return
+    }
+    setInputError(null)
+    onOpenByName(parsed.owner, parsed.repo)
+  }
+
   return (
     <div className="explore-root">
       <div className="explore-header">
         <h1>Explore</h1>
         <p className="explore-sub">Public builds from the community. No sign-in required.</p>
       </div>
+      <form className="explore-open" onSubmit={submit}>
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Open any public repo: owner/repo or a GitHub link"
+          aria-label="GitHub repository"
+          spellCheck={false}
+        />
+        <button type="submit" className="btn primary">Open</button>
+      </form>
+      {inputError && <p className="explore-open-error">{inputError}</p>}
+      {recent.length > 0 && (
+        <>
+          <h2 className="explore-section">Recently opened</h2>
+          <div className="explore-grid">{recent.map((r) => <RepoCard key={`${r.owner}/${r.repo}`} repo={r} onOpen={onOpen} />)}</div>
+          <h2 className="explore-section">Featured</h2>
+        </>
+      )}
       <div className="explore-grid">
-        {repos.map((r) => (
-          <button key={`${r.owner}/${r.repo}`} type="button" className="explore-card" onClick={() => onOpen(r)}>
-            <div className="explore-card-label">{r.label}</div>
-            <div className="explore-card-repo">{r.owner}/{r.repo}</div>
-            <div className="explore-card-desc">{r.description}</div>
-            <div className="explore-card-cta">View history →</div>
-          </button>
-        ))}
+        {repos.map((r) => <RepoCard key={`${r.owner}/${r.repo}`} repo={r} onOpen={onOpen} />)}
       </div>
     </div>
+  )
+}
+
+function RepoCard({ repo, onOpen }: { repo: RemoteRepo; onOpen: (r: RemoteRepo) => void }) {
+  return (
+    <button type="button" className="explore-card" onClick={() => onOpen(repo)}>
+      <div className="explore-card-label">{repo.label}</div>
+      <div className="explore-card-repo">{repo.owner}/{repo.repo}</div>
+      <div className="explore-card-desc">{repo.description}</div>
+      <div className="explore-card-cta">View history →</div>
+    </button>
   )
 }
 
