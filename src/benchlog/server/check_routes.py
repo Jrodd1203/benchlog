@@ -5,6 +5,7 @@
 """
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from benchlog.core.checks import CheckReport
 from benchlog.core.checks.store import check_project, load_report
@@ -12,23 +13,26 @@ from benchlog.core.project import ProjectError
 from benchlog.core.reconcile import reconcile
 from benchlog.core.repo import GitError
 from benchlog.server.deps import ProjectDep
-from benchlog.server.serial_routes import snapshot_for
+from benchlog.server.serial_routes import CLIENT_SERIAL_FIELD, ClientSerialReadings, readings_for
 
 router = APIRouter(prefix="/api/checks", tags=["checks"])
 
 
+class RunChecksRequest(BaseModel):
+    serial: ClientSerialReadings | None = Field(default=None, description=CLIENT_SERIAL_FIELD)
+
+
 @router.post("/run")
-def run(project: ProjectDep, request: Request) -> CheckReport:
-    """Check the working circuit. Probes the ESP32 first if one is connected.
+def run(project: ProjectDep, request: Request, body: RunChecksRequest | None = None) -> CheckReport:
+    """Check the working circuit, with what the ESP32 senses: the browser's readings if sent, else
+    the server's own ESP32 (probed first if connected).
 
     When the circuit matches HEAD, the report is saved for that commit.
     """
-    snapshot = snapshot_for(request.app, project)
+    readings = readings_for(request.app, project, body.serial if body else None)
     reconciliation = None
-    if snapshot is not None:
-        reconciliation = reconcile(
-            project.load_circuit(), project.pending_observations(), snapshot.probe.pins, snapshot.i2c.devices
-        )
+    if readings is not None:
+        reconciliation = reconcile(project.load_circuit(), project.pending_observations(), readings.pins, readings.i2c)
     return check_project(project, reconciliation)
 
 

@@ -128,6 +128,24 @@ export interface SerialSnapshot {
   i2c: { sda: number; scl: number; devices: string[] }
 }
 
+/** ESP32 readings taken by the browser over Web Serial, sent as `serial` with POST /api/scan
+ *  (mirrors the backend's SerialReadings). */
+export interface SerialReadings {
+  /** ISO 8601 UTC time of the probe. */
+  probed_at: string
+  /** Port label, e.g. "browser (USB 10c4:ea60)". */
+  port: string | null
+  /** Firmware version from HELLO. */
+  agent: string | null
+  /** GPIO -> what it senses. */
+  pins: Record<string, PinState>
+  /** Addresses that answered; null when I2C wasn't scanned. */
+  i2c: string[] | null
+}
+
+/** The browser's own ESP32 connection (Web Serial). */
+export type BrowserSerialState = 'unsupported' | 'disconnected' | 'connecting' | 'connected'
+
 export interface ScanResponse {
   source: string
   warnings: string[]

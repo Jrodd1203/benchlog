@@ -4,6 +4,7 @@
 // `request()` (active project, error messages).
 
 import { ApiError, request } from '../api'
+import { takeReadings } from '../serial/esp32'
 import type { Circuit, CircuitDiff, Hole } from '../types'
 
 // ── Checks ────────────────────────────────────────────────────────────────────────────────────
@@ -26,8 +27,12 @@ export interface CheckReport {
   results: CheckResult[]
 }
 
-/** Check the working circuit now (probes the ESP32 first if it's connected). */
-export const runChecks = () => request<CheckReport>('POST', '/api/checks/run')
+/** Check the working circuit now, with what the ESP32 senses: this browser's readings (Web Serial)
+ *  if it's connected, else the server probes its own ESP32 if it has one. */
+export async function runChecks(): Promise<CheckReport> {
+  const { readings } = await takeReadings()
+  return request<CheckReport>('POST', '/api/checks/run', readings ? { serial: readings } : {})
+}
 
 /** The report saved for a commit, or null if there isn't one. */
 export async function getSavedChecks(commit = 'HEAD'): Promise<CheckReport | null> {
