@@ -138,6 +138,32 @@ def test_tracks_a_bumped_board(cal: cal_mod.Calibration) -> None:
     assert tracking.rotation_deg == pytest.approx(-2.0, abs=0.05)
 
 
+def cover(frame: np.ndarray, holes: dict, first: str, last: str) -> np.ndarray:
+    """A dark board (like an ESP32) lying over the holes from `first` to `last`, corner to corner."""
+    out = frame.copy()
+    (x0, y0), (x1, y1) = holes[first], holes[last]
+    cv2.rectangle(out, (round(min(x0, x1)), round(min(y0, y1))), (round(max(x0, x1)), round(max(y0, y1))), (25, 25, 30), -1)
+    return out
+
+
+def test_tracks_a_board_partly_covered_by_a_big_part(cal: cal_mod.Calibration) -> None:
+    frame, matrix = moved(DESK, degrees=1.5, dx=12, dy=-8)
+    holes_now = cal_mod.Tracking(matrix=matrix.astype(np.float32), correlation=1.0).apply(cal.holes)
+    frame = cover(frame, holes_now, "A1", "J16")  # a quarter of the board
+    tracking = cal_mod.track(cal, frame)
+    assert 0.1 < tracking.covered < 0.5
+    got = tracking.apply(cal.holes)
+    for name in ("A40", "J63", "R+50", "L-30"):  # holes that are still visible
+        expected = matrix @ np.array([*cal.holes[name], 1.0])
+        assert np.linalg.norm(np.subtract(got[name], expected)) < 1.0, name
+
+
+def test_mostly_covered_board_says_so(cal: cal_mod.Calibration) -> None:
+    frame = cover(DESK, cal.holes, "L+1", "R-50")
+    with pytest.raises(cal_mod.CalibrationError):
+        cal_mod.track(cal, frame)
+
+
 def test_lost_board_and_resolution_change(cal: cal_mod.Calibration) -> None:
     with pytest.raises(cal_mod.CalibrationError):
         cal_mod.track(cal, np.full_like(DESK, DESK_GRAY))
