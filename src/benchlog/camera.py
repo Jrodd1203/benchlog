@@ -93,6 +93,12 @@ def write_debug(frame, calibration, debug_dir: Path) -> list[str]:
         return [f"tracking failed: {e}", f"saved the frame to {debug_dir}"]
     occupancy = classify(calibration, frame, tracking)
     cv2.imwrite(str(debug_dir / "changes.png"), debug_image(calibration, frame, occupancy))
+    from benchlog.vision.calibration import change_map
+    from benchlog.vision.objects import draw_objects, find_objects
+
+    objects = find_objects(calibration, frame, tracking)
+    _, aligned = change_map(calibration, frame, tracking)
+    cv2.imwrite(str(debug_dir / "objects.png"), draw_objects(aligned, objects))
     ranked = sorted(occupancy.diffs, key=occupancy.diffs.get, reverse=True)
     values = sorted(occupancy.diffs.values())
     return [
@@ -100,7 +106,9 @@ def write_debug(frame, calibration, debug_dir: Path) -> list[str]:
         f"change threshold {occupancy.threshold:.1f} (typical hole {values[len(values) // 2]:.1f})",
         "most changed: " + ", ".join(f"{n} {occupancy.diffs[n]:.1f}" for n in ranked[:10]),
         f"changed since calibration: {sorted(occupancy.changed) or 'none'}",
-        f"saved frame.png and changes.png to {debug_dir}",
+        f"objects since calibration: {len(objects) or 'none'}",
+        *(f"  {obj.summary()}" for obj in objects),
+        f"saved frame.png, changes.png and objects.png to {debug_dir}",
     ]
 
 

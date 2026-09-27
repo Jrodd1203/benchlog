@@ -513,8 +513,11 @@ def _lab(img: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)
 
 
-def classify(cal: Calibration, frame: np.ndarray, tracking: Tracking) -> Occupancy:
-    """Holes occupied now, judged by whether each looks different from its calibration appearance."""
+def change_map(cal: Calibration, frame: np.ndarray, tracking: Tracking) -> tuple[np.ndarray, np.ndarray]:
+    """How much each pixel differs from the calibration image, and the frame lined up with it.
+
+    Both are in the calibration image's coordinates (top-down, holes where `cal.holes` says).
+    """
     h, w = cal.reference.shape[:2]
     # Bring the current frame into the reference's coordinates so every hole lines up exactly.
     aligned = cv2.warpPerspective(frame, tracking.matrix, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP)
@@ -528,7 +531,13 @@ def classify(cal: Calibration, frame: np.ndarray, tracking: Tracking) -> Occupan
     ref_lab -= cv2.GaussianBlur(ref_lab, (0, 0), LIGHTING_SIGMA_PITCH * pitch)
     cur_lab -= cv2.GaussianBlur(cur_lab, (0, 0), LIGHTING_SIGMA_PITCH * pitch)
 
-    distance = np.linalg.norm(cur_lab - ref_lab, axis=2)
+    return np.linalg.norm(cur_lab - ref_lab, axis=2), aligned
+
+
+def classify(cal: Calibration, frame: np.ndarray, tracking: Tracking) -> Occupancy:
+    """Holes occupied now, judged by whether each looks different from its calibration appearance."""
+    distance, _ = change_map(cal, frame, tracking)
+    pitch = hole_pitch_px(cal.holes)
     r = max(2, round(PATCH_RADIUS_PITCH * pitch))
     diffs = {}
     for name, (x, y) in cal.holes.items():
