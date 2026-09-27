@@ -103,9 +103,15 @@ class StatusResponse(BaseModel):
     pending: int = Field(description="Observations waiting for review.")
 
 
+class CheckpointEntry(BaseModel):
+    label: str
+    note: str = ""
+
+
 class HistoryEntry(BaseModel):
     commit: Commit
     lines: list[str] = Field(description="What this commit changed in the circuit.")
+    checkpoint: CheckpointEntry | None = Field(default=None, description="Set when this commit is a build-guide step.")
 
 
 class ScanRequest(BaseModel):
@@ -286,15 +292,56 @@ def get_diff(
     return _diff_response(before, after)
 
 
+def _make_history_entry(project: Project, c: "Commit", cp: "Checkpoint | None") -> HistoryEntry:
+    after = project.circuit_at(c.sha)
+    before = project.circuit_at(f"{c.sha}^") or Circuit(board=after.board)
+    return HistoryEntry(
+        commit=c,
+        lines=describe(diff(before, after)),
+        checkpoint=CheckpointEntry(label=cp.label, note=cp.note) if cp else None,
+    )
+
+
 @app.get("/api/history")
 def history(project: ProjectDep, limit: int | None = None) -> list[HistoryEntry]:
     """Commits that changed the circuit, newest first. Fetch /api/circuit/{sha} for each one's circuit."""
-    entries = []
-    for c in project.history(limit=limit):
-        after = project.circuit_at(c.sha)
-        before = project.circuit_at(f"{c.sha}^") or Circuit(board=after.board)
-        entries.append(HistoryEntry(commit=c, lines=describe(diff(before, after))))
-    return entries
+    checkpoints = project.checkpoints.by_sha()
+    return [_make_history_entry(project, c, checkpoints.get(c.sha)) for c in project.history(limit=limit)]
+
+
+class CheckpointRequest(BaseModel):
+    label: str = Field(min_length=1, description="Short step title, e.g. 'ESP32 + LED working'.")
+    note: str = Field(default="", description="Longer description or measurement note.")
+
+
+@app.post("/api/commits/{sha}/checkpoint")
+def set_checkpoint(sha: str, request: CheckpointRequest, project: ProjectDep) -> CheckpointEntry:
+    """Mark a commit as a build-guide step."""
+    try:
+        project.repo.run("rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}")
+    except GitError as e:
+        raise ProjectError(f"unknown revision {sha!r}") from e
+    cp = project.checkpoints.set(sha, request.label, request.note)
+    return CheckpointEntry(label=cp.label, note=cp.note)
+
+
+@app.delete("/api/commits/{sha}/checkpoint", status_code=204)
+def remove_checkpoint(sha: str, project: ProjectDep) -> None:
+    """Remove a build-guide annotation from a commit."""
+    project.checkpoints.remove(sha)
+
+
+@app.get("/api/guide")
+def guide(project: ProjectDep) -> list[HistoryEntry]:
+    """Only the checkpointed commits, oldest first — the build guide."""
+    checkpoints = project.checkpoints.by_sha()
+    if not checkpoints:
+        return []
+    return [
+        _make_history_entry(project, c, checkpoints[c.sha])
+        for c in reversed(project.history())
+        if c.sha in checkpoints
+    ]
 
 
 @app.post("/api/scan")

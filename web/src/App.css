@@ -1321,3 +1321,133 @@ select:focus {
 @keyframes stamp-in {
   from { transform: translate(-50%, -50%) rotate(-22deg) scale(1.5); opacity: 0; }
 }
+
+.board-stamp.guide {
+  font-size: clamp(1.2rem, 3vw, 2rem);
+  color: #7cc6f8;
+  opacity: 0.18;
+  border: 2px solid #7cc6f8;
+  padding: 0.3rem 0.9rem;
+  border-radius: 3px;
+  animation: stamp-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Build guide mode bar */
+.timeline-mode-bar {
+  padding: 0.5rem 1.25rem 0;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.timeline-mode-tabs {
+  display: flex;
+  gap: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(255 255 255 / 0.1);
+}
+
+.timeline-mode-tabs .btn.tab {
+  border-radius: 0;
+  border: none;
+  border-right: 1px solid rgba(255 255 255 / 0.1);
+  background: rgba(255 255 255 / 0.04);
+  color: rgba(255 255 255 / 0.5);
+  font-size: 0.82rem;
+  padding: 0.35rem 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.timeline-mode-tabs .btn.tab:last-child {
+  border-right: none;
+}
+
+.timeline-mode-tabs .btn.tab.active {
+  background: rgba(134, 173, 230, 0.15);
+  color: #86ade6;
+}
+
+.timeline-mode-tabs .btn.tab:hover:not(.active) {
+  background: rgba(255 255 255 / 0.08);
+  color: rgba(255 255 255 / 0.75);
+}
+
+.tab-count {
+  background: rgba(134, 173, 230, 0.2);
+  color: #86ade6;
+  font-size: 0.7rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+/* Guide step label above the commit message */
+.guide-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7cc6f8;
+  margin: 0 0 0.2rem;
+}
+
+/* Guide pip */
+[data-screen='timeline'] .pip.guide {
+  background: #7cc6f8;
+  width: 5px;
+  height: 14px;
+  border-radius: 2px;
+}
+
+[data-screen='timeline'] .pip.guide.active {
+  background: #fff;
+  box-shadow: 0 0 6px #7cc6f8;
+}
+
+/* Guide step badge */
+[data-screen='timeline'] .badge.guide {
+  color: #7cc6f8;
+  background: rgba(124, 198, 248, 0.12);
+  border-color: #7cc6f8;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.75rem;
+}
+
+/* Checkpoint form inline in commit-info */
+.checkpoint-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255 255 255 / 0.06);
+}
+
+.checkpoint-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.checkpoint-form .field span {
+  font-size: 0.75rem;
+  opacity: 0.5;
+}
+
+.checkpoint-form .field input {
+  font-size: 0.85rem;
+}
+
+/* Highlighted commit-info when it is a guide step */
+[data-screen='timeline'] .commit-info.checkpoint {
+  border-left-color: #7cc6f8;
+}
+
+.notice.error.small {
+  font-size: 0.8rem;
+  padding: 0.4rem 0.75rem;
+}

@@ -174,6 +174,11 @@ export interface ProjectSummary {
 
 export type SerialState = 'connected' | 'disconnected' | 'unknown'
 
+export interface CheckpointInfo {
+  label: string
+  note?: string
+}
+
 /** One commit on the timeline, oldest first. */
 export interface TimelineEntry {
   sha: string
@@ -190,4 +195,6 @@ export interface TimelineEntry {
   check?: 'pass' | 'fail' | 'none'
   tested?: boolean
   note?: string
+  /** Set when this commit is a build-guide step. */
+  checkpoint?: CheckpointInfo
 }
