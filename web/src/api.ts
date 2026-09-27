@@ -57,10 +57,14 @@ function withProject(path: string): string {
   return `${path}${sep}project=${encodeURIComponent(activeProjectId)}`
 }
 
+// Empty in dev (the Vite dev server proxies /api). Set VITE_API_URL at build time when the API is
+// on another origin, e.g. a separately deployed backend.
+const API_BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '')
+
 export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response
   try {
-    res = await fetch(withProject(path), {
+    res = await fetch(API_BASE + withProject(path), {
       method,
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),

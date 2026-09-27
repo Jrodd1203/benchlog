@@ -5,12 +5,14 @@ behave the same. Run it from inside a project with `benchlog serve`, or point it
 the BENCHLOG_PROJECT environment variable.
 """
 
+import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -41,6 +43,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="benchlog", lifespan=lifespan)
+# Only needed when the web UI is served from another origin (a deployed frontend); the Vite dev
+# server proxies /api, so locally this stays off. Comma-separated, e.g. "https://ui.example.com".
+if cors_origins := os.environ.get("BENCHLOG_CORS_ORIGINS"):
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip().rstrip("/") for o in cors_origins.split(",") if o.strip()],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 app.include_router(serial_router)
 app.include_router(check_router)
 app.include_router(branch_router)
