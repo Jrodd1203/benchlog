@@ -76,7 +76,7 @@ export async function request<T>(method: string, path: string, body?: unknown): 
     } catch {
       // not JSON (e.g. the dev proxy's 502 page); keep the generic message
     }
-    if (res.status === 502 || res.status === 504) detail = ‘Can’t reach the benchlog server. Is `benchlog serve` running?’
+    if (res.status === 502 || res.status === 504) detail = "Can’t reach the benchlog server. Is `benchlog serve` running?"
     throw new ApiError(res.status, detail)
   }
   if (res.status === 204 || res.status === 205) return undefined as T
