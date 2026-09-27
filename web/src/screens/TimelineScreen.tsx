@@ -54,7 +54,6 @@ export function TimelineScreen() {
   }, [entries, index])
 
   const last = entries.length - 1
-  const go = useCallback((i: number) => setIndex(Math.max(0, Math.min(last, i))), [last])
 
   // Live refs so the keyboard effect always sees current guide state without re-registering.
   const goVisibleRef = useRef<(i: number) => void>(() => {})
