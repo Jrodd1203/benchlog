@@ -4,8 +4,8 @@
 // isn't running we fall back to the example files so the UI still renders. Anything marked
 // NOT WIRED has no backend endpoint yet; it returns placeholder data and must be replaced.
 
-import movedWireExample from '../../examples/circuits/moved-wire.json'
-import workingExample from '../../examples/circuits/working.json'
+import movedWireExample from './examples/circuits/moved-wire.json'
+import workingExample from './examples/circuits/working.json'
 import { stripOf } from './board/geometry'
 import { BUILD_STAGES } from './mock/buildStages'
 import type {

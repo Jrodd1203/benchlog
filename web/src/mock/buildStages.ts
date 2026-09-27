@@ -4,7 +4,7 @@
 // Tells the demo story from CLAUDE.md: the circuit is built up step by step, then the pot wiper
 // wire w5 moves from A4 (GPIO34) to A12 (GPIO12, a strapping pin), the check fails, and it's fixed.
 
-import working from '../../../examples/circuits/working.json'
+import working from '../examples/circuits/working.json'
 import type { Circuit, Component, Wire } from '../types'
 
 export type CheckResult = 'pass' | 'fail' | 'none'
