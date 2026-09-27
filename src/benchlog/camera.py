@@ -47,12 +47,19 @@ def reading_from_frame(frame, source: str, calibration=None) -> BoardReading:
 
         radius = max(2, round(PATCH_RADIUS_PITCH * hole_pitch_px(calibration.holes)))
         colors = hole_colors(frame, tracking.apply(calibration.holes), occupancy.occupied, radius)
+        from benchlog.vision.calibration import change_map
+        from benchlog.vision.objects import find_objects
+        from benchlog.vision.parts import recognize
+
+        _, aligned = change_map(calibration, frame, tracking)
+        parts = recognize(calibration, find_objects(calibration, frame, tracking), aligned)
         warnings = []
         if tracking.shift_px > 3:
             warnings.append(f"board moved {tracking.shift_px:.0f} px / {tracking.rotation_deg:.1f}° since calibration (tracked)")
         return BoardReading(
             occupied=sorted(occupancy.occupied),
             colors=colors,
+            parts=parts,
             confidence=round(min(1.0, tracking.correlation), 3),
             warnings=warnings,
             source=source,
@@ -93,6 +100,12 @@ def write_debug(frame, calibration, debug_dir: Path) -> list[str]:
         return [f"tracking failed: {e}", f"saved the frame to {debug_dir}"]
     occupancy = classify(calibration, frame, tracking)
     cv2.imwrite(str(debug_dir / "changes.png"), debug_image(calibration, frame, occupancy))
+    from benchlog.vision.calibration import change_map
+    from benchlog.vision.objects import draw_objects, find_objects
+
+    objects = find_objects(calibration, frame, tracking)
+    _, aligned = change_map(calibration, frame, tracking)
+    cv2.imwrite(str(debug_dir / "objects.png"), draw_objects(aligned, objects))
     ranked = sorted(occupancy.diffs, key=occupancy.diffs.get, reverse=True)
     values = sorted(occupancy.diffs.values())
     return [
@@ -100,7 +113,9 @@ def write_debug(frame, calibration, debug_dir: Path) -> list[str]:
         f"change threshold {occupancy.threshold:.1f} (typical hole {values[len(values) // 2]:.1f})",
         "most changed: " + ", ".join(f"{n} {occupancy.diffs[n]:.1f}" for n in ranked[:10]),
         f"changed since calibration: {sorted(occupancy.changed) or 'none'}",
-        f"saved frame.png and changes.png to {debug_dir}",
+        f"objects since calibration: {len(objects) or 'none'}",
+        *(f"  {obj.summary()}" for obj in objects),
+        f"saved frame.png, changes.png and objects.png to {debug_dir}",
     ]
 
 

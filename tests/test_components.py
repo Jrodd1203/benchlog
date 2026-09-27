@@ -137,8 +137,10 @@ def test_api_edit_names_a_component(project: Project, monkeypatch: pytest.Monkey
 
     monkeypatch.setenv("BENCHLOG_PROJECT", str(project.repo.root))
     client = TestClient(api)
-    body = client.patch("/api/observations/obs1", json={"suggested": {"type": "diode", "model": "1N4148"}})
-    assert body.status_code == 400  # diode isn't a type yet (stage 2)
+    body = client.patch("/api/observations/obs1", json={"suggested": {"type": "flux_capacitor"}})
+    assert body.status_code == 400
+    body = client.patch("/api/observations/obs1", json={"suggested": {"type": "diode", "model": "1N4148"}}).json()
+    assert body["suggested"] == {"type": "diode", "value": None, "model": "1N4148"}
     body = client.patch("/api/observations/obs1", json={"suggested": {"type": "led", "value": "green"}}).json()
     assert body["suggested"] == {"type": "led", "value": "green", "model": None}
 

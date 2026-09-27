@@ -25,6 +25,7 @@ import cv2
 import numpy as np
 
 from benchlog.core.board import RAILS
+from benchlog.core.numbering import COMMON
 from benchlog.vision.bb830_layout import BOARD_H_MM, BOARD_W_MM, hole_positions_mm
 from benchlog.vision.capture import (
     MAX_RELIABLE_RESIDUAL_PX,
@@ -265,6 +266,7 @@ class Calibration:
     camera: int | None = None
     # Holes that were occupied in the reference image (empty unless calibrated with a circuit built).
     occupied: list[str] = field(default_factory=list)
+    first_row: int = 1  # the number printed on the board's first row (some boards start at 0)
 
     @property
     def frame_size(self) -> tuple[int, int]:
@@ -281,6 +283,7 @@ class Calibration:
             "corners": np.asarray(self.corners).tolist(),
             "holes": {n: [round(x, 2), round(y, 2)] for n, (x, y) in self.holes.items()},
             "occupied": sorted(self.occupied),
+            "first_row": self.first_row,
         }
         (directory / CALIBRATION_FILE).write_text(json.dumps(data, indent=1) + "\n")
 
@@ -299,6 +302,7 @@ class Calibration:
             reference=reference,
             camera=data.get("camera"),
             occupied=list(data.get("occupied", [])),
+            first_row=int(data.get("first_row", 1)),
         )
 
 
@@ -513,8 +517,11 @@ def _lab(img: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)
 
 
-def classify(cal: Calibration, frame: np.ndarray, tracking: Tracking) -> Occupancy:
-    """Holes occupied now, judged by whether each looks different from its calibration appearance."""
+def change_map(cal: Calibration, frame: np.ndarray, tracking: Tracking) -> tuple[np.ndarray, np.ndarray]:
+    """How much each pixel differs from the calibration image, and the frame lined up with it.
+
+    Both are in the calibration image's coordinates (top-down, holes where `cal.holes` says).
+    """
     h, w = cal.reference.shape[:2]
     # Bring the current frame into the reference's coordinates so every hole lines up exactly.
     aligned = cv2.warpPerspective(frame, tracking.matrix, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP)
@@ -528,7 +535,13 @@ def classify(cal: Calibration, frame: np.ndarray, tracking: Tracking) -> Occupan
     ref_lab -= cv2.GaussianBlur(ref_lab, (0, 0), LIGHTING_SIGMA_PITCH * pitch)
     cur_lab -= cv2.GaussianBlur(cur_lab, (0, 0), LIGHTING_SIGMA_PITCH * pitch)
 
-    distance = np.linalg.norm(cur_lab - ref_lab, axis=2)
+    return np.linalg.norm(cur_lab - ref_lab, axis=2), aligned
+
+
+def classify(cal: Calibration, frame: np.ndarray, tracking: Tracking) -> Occupancy:
+    """Holes occupied now, judged by whether each looks different from its calibration appearance."""
+    distance, _ = change_map(cal, frame, tracking)
+    pitch = hole_pitch_px(cal.holes)
     r = max(2, round(PATCH_RADIUS_PITCH * pitch))
     diffs = {}
     for name, (x, y) in cal.holes.items():
@@ -628,6 +641,7 @@ class CalibrationEditor:
     last_snap: float = float("-inf")
     message: str = ""
     row1_left: bool = False  # board numbered from the other end (the layout has row 1 on the right)
+    first_row: int = 1  # the number printed on the board's first row (n toggles 1 / 0)
     expect_empty: bool = True  # False when calibrating with the circuit built
     confirm_save: bool = False  # the user was warned the board doesn't look empty; Enter again saves
 
@@ -710,6 +724,8 @@ class CalibrationEditor:
             self.selected = key - ord("1")
         elif key == ord("r"):
             self.row1_left = not self.row1_left
+        elif key == ord("n"):  # cycle the common labelings: 1 at the 1st column, 0 at the 1st, 0 at the 2nd
+            self.first_row = COMMON[(COMMON.index(self.first_row) + 1) % len(COMMON)] if self.first_row in COMMON else 1
         elif key in _NUDGE and self.corners is not None:
             corners = self.corners.copy()
             corners[self.selected] += np.float32(_NUDGE[key])
@@ -719,24 +735,30 @@ class CalibrationEditor:
         return None
 
 
-def draw_holes(img: np.ndarray, holes: dict[str, tuple[float, float]], pitch: float | None = None) -> None:
-    """Dots on every hole: rails + red / - blue, terminal holes green, row labels every 5."""
+def draw_holes(img: np.ndarray, holes: dict[str, tuple[float, float]], pitch: float | None = None, first_row: int = 1) -> None:
+    """Dots on every hole: rails + red / - blue, terminal holes green, row labels every 5 (as printed)."""
     pitch = pitch or hole_pitch_px(holes)
     radius = max(2, round(pitch * 0.18))
     for name, (x, y) in holes.items():
         rail = name[:2] if name[:2] in RAILS else None
         color = (60, 60, 230) if rail and "+" in rail else (230, 120, 40) if rail else (60, 200, 60)
         cv2.circle(img, (round(x), round(y)), radius, color, -1, cv2.LINE_AA)
-    for row in (1, 5, 10, 20, 30, 40, 50, 60):
+    offset = first_row - 1
+    for printed in (0, 1, 5, 10, 20, 30, 40, 50, 60):
+        row = printed - offset
+        if printed in (0, 1) and printed != max(first_row, 0):
+            continue  # label only where the board's numbering starts (0 or 1)
+        if f"A{row}" not in holes:
+            continue
         x, y = holes[f"A{row}"]
-        cv2.putText(img, str(row), (round(x - pitch / 2), round(y - pitch * 0.8)), cv2.FONT_HERSHEY_SIMPLEX,
+        cv2.putText(img, str(printed), (round(x - pitch / 2), round(y - pitch * 0.8)), cv2.FONT_HERSHEY_SIMPLEX,
                     max(0.4, pitch / 40), (0, 220, 255), 1, cv2.LINE_AA)  # fmt: skip
 
 
 def render(editor: CalibrationEditor, frame: np.ndarray) -> np.ndarray:
     out = frame.copy()
     if editor.holes is not None:
-        draw_holes(out, editor.named_holes())
+        draw_holes(out, editor.named_holes(), first_row=editor.first_row)
     if editor.corners is not None:
         cv2.polylines(out, [editor.corners.astype(np.int32)], True, (0, 220, 255), 2, cv2.LINE_AA)
         for i, (x, y) in enumerate(editor.corners):
@@ -747,7 +769,7 @@ def render(editor: CalibrationEditor, frame: np.ndarray) -> np.ndarray:
     lock = f"LOCKED on holes ({editor.residual:.1f} px)" if editor.locked else "placed by hand" if not editor.auto else "not locked"
     lines = [
         f"{mode} - {lock}. Check every dot sits in a hole and the yellow row numbers match the board's, then Enter",
-        "drag corners, or 1-4 + arrows/ijkl to nudge   f: snap now   a: re-detect   r: flip row numbering   Enter: save   Esc: cancel",
+        "drag corners / 1-4 + arrows to nudge   f: snap   a: re-detect   r: flip numbering   n: first row 0/1   Enter: save",
     ]
     if editor.message:
         lines.append(editor.message)
@@ -759,14 +781,15 @@ def render(editor: CalibrationEditor, frame: np.ndarray) -> np.ndarray:
 
 
 def run_calibration(
-    cap: cv2.VideoCapture, camera: int | None = None, occupied: list[str] = (), window: str = "benchlog calibrate"
+    cap: cv2.VideoCapture, camera: int | None = None, occupied: list[str] = (), window: str = "benchlog calibrate",
+    first_row: int = 1,
 ) -> Calibration | None:
     """Interactive window. Returns the calibration on Enter, None on Esc."""
     import time
 
     from benchlog.vision.camera import read_frame  # camera imports capture, like this module
 
-    editor = CalibrationEditor(expect_empty=not occupied)
+    editor = CalibrationEditor(expect_empty=not occupied, first_row=first_row)
     frame = read_frame(cap)
     h, w = frame.shape[:2]
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
@@ -783,7 +806,8 @@ def run_calibration(
                 return None
             if action == "save":
                 return Calibration(
-                    corners=editor.corners, holes=editor.named_holes(), reference=frame.copy(), camera=camera, occupied=list(occupied)
+                    corners=editor.corners, holes=editor.named_holes(), reference=frame.copy(), camera=camera,
+                    occupied=list(occupied), first_row=editor.first_row,
                 )
     finally:
         cv2.destroyAllWindows()

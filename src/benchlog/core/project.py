@@ -26,6 +26,7 @@ from benchlog.core.board_state import BoardStateStore, fingerprint
 from benchlog.core.checkpoints import CheckpointStore
 from benchlog.core.models import Circuit, ComponentType, Hole, Observation, ObservationKind, ObservationStatus, Suggestion
 from benchlog.core.pairing import apply_observations
+from benchlog.core.parts import esp32_devkit_v1_30_pins
 from benchlog.core.reconcile import Reconciliation, SerialReadings, reconcile, serial_record
 from benchlog.core.repo import Commit, GitError, Repo
 from benchlog.core.scan import BoardReading, MisreadError, ScanStore
@@ -52,6 +53,38 @@ class HardwareCheck(BaseModel):
     def trailer(self, forced: bool = False) -> str:
         """Git trailer recording the result in the commit message."""
         return f"ESP32-Check: {self.status}" + (" (forced)" if forced and self.status == "failed" else "")
+
+
+def _anchor_esp32(current: dict[str, Hole], given: dict[str, Hole], template) -> dict[str, Hole]:
+    """All 30 DevKit pins from one or two the user placed (EN, and VIN to set which way round).
+
+    EN and VIN are the two ends of the same header, so VIN's hole sets the orientation; with EN
+    alone, the current orientation is kept.
+    """
+    if "EN" not in given:
+        raise ProjectError("to place the ESP32, give EN (and VIN to set which way round), e.g. EN=A40 VIN=A26")
+    en = given["EN"]
+    col, en_row = en[0], int(en[1:])
+    right = {"A": "H", "B": "I", "C": "J"}.get(col)
+    if right is None or en[1] in "+-":
+        raise ProjectError("EN must be in column A, B or C (the ESP32 straddles the centre channel)")
+    if "VIN" in given:
+        vin = given["VIN"]
+        if vin[0] != col or abs(int(vin[1:]) - en_row) != 14:
+            raise ProjectError("VIN must be in the same column as EN, 14 holes away (the other end of that header)")
+        en_first = int(vin[1:]) > en_row
+    elif current.get("EN") and current.get("VIN"):
+        en_first = int(current["VIN"][1:]) > int(current["EN"][1:])
+    else:
+        en_first = True
+    top = en_row if en_first else en_row - 14
+    pins = esp32_devkit_v1_30_pins(top, col, right)
+    if not en_first:  # mirrored end to end: EN at the bottom row, VIN at the top
+        pins = {name: f"{hole[0]}{2 * top + 14 - int(hole[1:])}" for name, hole in pins.items()}
+    bad = [h for h in pins.values() if not template.is_valid(h)]
+    if bad:
+        raise ProjectError(f"the ESP32 wouldn't fit there (off the board at {', '.join(bad[:3])})")
+    return pins
 
 
 class ProjectError(RuntimeError):
@@ -134,6 +167,10 @@ class Project:
         path = self.repo.root / CONFIG_PATH
         path.parent.mkdir(exist_ok=True)
         path.write_text(json.dumps({**self.config(), key: value}, indent=2, sort_keys=True) + "\n")
+
+    def first_row(self) -> int:
+        """The number printed on the board's first row: 1 (benchlog's own numbering) or 0."""
+        return int(self.config().get("first_row", 1))
 
     def camera_index(self, override: int | None = None) -> int:
         """The camera to scan with: an explicit override, else the saved one, else 0."""
@@ -292,12 +329,18 @@ class Project:
         bad_holes = [h for h in ends.values() if not template.is_valid(h)]
         if bad_holes:
             raise ProjectError(f"not a hole on {template.id}: {', '.join(bad_holes)}")
-        update: dict = {"after": {**(obs.after or {}), **ends}, "uncertain_holes": [], "confidence": 1.0}
+        after = {**(obs.after or {}), **ends}
+        if obs.suggested and obs.suggested.type == ComponentType.ESP32_DEVKIT_V1_30 and ends:
+            after = _anchor_esp32(obs.after or {}, ends, template)
+        update: dict = {"after": after, "uncertain_holes": [], "confidence": 1.0}
         if suggestion:
             bad_keys = set(suggestion) - {"type", "value", "model"}
             if bad_keys:
                 raise ProjectError(f"{obs_id}: can set type, value and model, not {', '.join(sorted(bad_keys))}")
-            merged = {**(obs.suggested.model_dump() if obs.suggested else {}), **suggestion}
+            previous = obs.suggested.model_dump(mode="json") if obs.suggested else {}
+            if "type" in suggestion and suggestion["type"] != previous.get("type"):
+                previous = {}  # a different kind of part: its old value and model don't apply
+            merged = {**previous, **suggestion}
             try:
                 update["suggested"] = Suggestion.model_validate(merged)
             except ValueError as e:
