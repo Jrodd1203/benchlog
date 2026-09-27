@@ -73,16 +73,26 @@
   font-weight: 600;
 }
 
-.bb-part line {
-  stroke-width: 0.9;
+.bb-part.esp32 rect.usb {
+  fill: #94a3b8;
+  stroke: #5b6754;
+  stroke-width: 0.15;
+}
+
+.bb-part .bb-lead {
+  stroke-width: 0.4;
   stroke-linecap: round;
-  opacity: 0.85;
 }
 
 .bb-part text {
   fill: var(--bb-part-text);
   font-size: 1.5px;
   text-anchor: middle;
+  /* a board-coloured outline keeps labels readable over holes, row numbers and other parts */
+  paint-order: stroke;
+  stroke: var(--bb-body);
+  stroke-width: 0.45px;
+  stroke-linejoin: round;
 }
 
 /* A thin light edge under every wire keeps black wires readable where they cross holes. */
