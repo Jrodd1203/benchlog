@@ -4,29 +4,19 @@
     GET  /api/checks?commit=... the report saved for a commit
 """
 
-import os
-from pathlib import Path
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from benchlog.core.checks import CheckReport
 from benchlog.core.checks.store import check_project, load_report
-from benchlog.core.project import Project, ProjectError
+from benchlog.core.project import ProjectError
 from benchlog.core.reconcile import reconcile
 from benchlog.core.repo import GitError
+from benchlog.server.deps import ProjectDep
 from benchlog.server.serial_routes import serial_service
 
 router = APIRouter(prefix="/api/checks", tags=["checks"])
 
 
-def get_project() -> Project:
-    # Same lookup as server/app.py (importing it from there would be circular).
-    start = os.environ.get("BENCHLOG_PROJECT")
-    return Project.find(Path(start) if start else None)
-
-
-ProjectDep = Annotated[Project, Depends(get_project)]
 
 
 @router.post("/run")

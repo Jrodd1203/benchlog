@@ -5,13 +5,12 @@ behave the same. Run it from inside a project with `benchlog serve`, or point it
 the BENCHLOG_PROJECT environment variable.
 """
 
-import os
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,6 +28,7 @@ from benchlog.server.branch_routes import router as branch_router
 from benchlog.server.check_routes import router as check_router
 from benchlog.server.pr_routes import not_found as pr_not_found
 from benchlog.server.pr_routes import router as pr_router
+from benchlog.server.deps import PROJECTS_ROOT, ProjectDep
 from benchlog.server.serial_routes import router as serial_router
 from benchlog.server.serial_routes import serial_service
 
@@ -54,33 +54,11 @@ async def _user_error(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
-def get_project(
-    project: Annotated[
-        str | None,
-        Query(description="Project id (a folder slug from GET /api/projects). Omit for the single project `benchlog serve` was started in."),
-    ] = None,
-) -> Project:
-    if project is not None:
-        # `project` is a client-supplied query param, not something _slugify has sanitized (that
-        # only guards names *we* turn into folders in create_project) — reject anything that could
-        # escape PROJECTS_ROOT (path separators, "..") before it ever reaches the filesystem.
-        if not project or any(c in project for c in "/\\") or project in (".", ".."):
-            raise ProjectError(f"invalid project id {project!r}")
-        path = PROJECTS_ROOT / project
-        if path.resolve().parent != PROJECTS_ROOT.resolve() or not path.is_dir():
-            raise ProjectError(f"no project {project!r} under {PROJECTS_ROOT}")
-        return Project.find(path)
-    start = os.environ.get("BENCHLOG_PROJECT")
-    return Project.find(Path(start) if start else None)
-
-
-ProjectDep = Annotated[Project, Depends(get_project)]
 
 # Where the web UI's "New project" creates folders, one benchlog project (git repo) per
 # subdirectory — the same layout `cd somewhere && benchlog init` produces, just automated.
 # `benchlog serve` normally runs inside a single project (see get_project above); this is a
 # separate, lightweight registry of projects the UI can list and create.
-PROJECTS_ROOT = Path(os.environ.get("BENCHLOG_PROJECTS_ROOT", Path.home() / "benchlog-projects"))
 
 
 # Reserved on Windows regardless of extension; mkdir raises an unhandled OSError for these.
