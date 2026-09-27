@@ -1,4 +1,9 @@
-"""Dependencies shared by every route module, so they all resolve the same project."""
+"""Dependencies shared by the route modules (importing them from app.py would be circular).
+
+Which project a request is about: `?project=<id>` (a folder under PROJECTS_ROOT, as listed by
+GET /api/projects; the web UI adds it to every call), else the one `benchlog serve` started in.
+Every route uses this, so branches, PRs and checks follow the project picked in the UI too.
+"""
 
 import os
 from pathlib import Path
@@ -8,10 +13,8 @@ from fastapi import Depends, Query
 
 from benchlog.core.project import Project, ProjectError
 
-# Where the web UI's "New project" creates folders, one benchlog project (git repo) per
-# subdirectory — the same layout `cd somewhere && benchlog init` produces, just automated.
-# `benchlog serve` normally runs inside a single project (see get_project below); this is a
-# separate, lightweight registry of projects the UI can list and create.
+# Where the web UI's "New project" creates folders (and `benchlog demo seed` puts demo projects),
+# one benchlog project (git repo) per subdirectory.
 PROJECTS_ROOT = Path(os.environ.get("BENCHLOG_PROJECTS_ROOT", Path.home() / "benchlog-projects"))
 
 

@@ -34,7 +34,36 @@ npm install
 npm run dev                  # proxies /api to http://127.0.0.1:8000
 ```
 
-Run the API with `benchlog serve`.
+Run the API with `benchlog serve` from inside a project (the web UI's dev server forwards `/api` to
+it). API docs are at http://localhost:8000/docs.
+
+```sh
+benchlog serve                         # the project containing this folder, on localhost:8000
+benchlog serve --project ~/my-board    # a project somewhere else
+benchlog serve --host 0.0.0.0          # reachable from other devices on the network (no login!)
+benchlog serve --reload                # restart on code changes while developing benchlog itself
+```
+
+Auto-reload is off by default: a restart also drops the ESP32 connection.
+
+### Demo projects
+
+```sh
+benchlog demo seed            # creates ~/benchlog-projects/{pot-led,weather-station,led-bar}
+benchlog serve                # from anywhere: the UI's projects screen lists that folder
+```
+
+Real git repos with a few days of history, built with the same code as everything else, so every
+screen works on them:
+
+- **pot-led**: the demo circuit; branch `move-sensor` has an open PR that **fails** its checks
+  (the pot moved onto GPIO12, a strapping pin), so it can't be merged
+- **weather-station**: ESP32 + BME280 over I2C; the wiring came in through a PR, tested and merged
+- **led-bar**: three LEDs; branch `third-led` has an open PR that passes and is ready to merge
+
+`--dir` picks another folder, `--reset` rebuilds them (only folders it generated). They're in the
+same folder the UI's "New project" uses, so they show up in its project list (`GET /api/projects`);
+every API route takes `?project=<id>` to pick one.
 
 ## Scanning from the bench camera
 

@@ -111,7 +111,8 @@ def test_busy_port_scans_camera_only(project: Project, ground_gpio18: Path, monk
 def test_no_port_chosen_or_no_serial(project: Project, ground_gpio18: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plug_in(monkeypatch, Esp32({18: "pulled_low"}))
     out = run("scan", "--simulate", str(ground_gpio18))
-    assert "serial" not in out and "ESP32" not in out
+    assert "serial: no ESP32 found; camera only" in out  # said, never silent
+    assert "ESP32" not in out.split("added wire")[1]  # but no verdicts
     run("review", "reject", "--all")
     run("serial", "use", "/dev/fake")
     run("scan", "--sync", "--simulate", str(EXAMPLES / "working.json"))
@@ -221,3 +222,21 @@ def test_api_commit_is_gated(project: Project, ground_gpio18: Path, monkeypatch:
     body = client.post("/api/commit", json={"message": "Ground GPIO18"}).json()
     assert body["hardware"]["status"] == "skipped"
     assert commit_message(project).strip().endswith("ESP32-Check: skipped")
+
+
+def test_cli_scan_saves_serial_results_into_the_circuit(
+    project: Project, ground_gpio18: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plug_in(monkeypatch, Esp32({18: "pulled_low"}))
+    run("serial", "use", "/dev/fake")
+    run("scan", "--simulate", str(ground_gpio18))
+    run("review", "accept", "--all")
+    saved = project.load_circuit().serial
+    assert saved is not None and saved.port == "/dev/fake"
+    assert next(p for p in saved.pins if p.gpio == 18).verdict == "confirmed"
+
+
+def test_cli_scan_without_an_esp32_saves_no_serial_results(project: Project, ground_gpio18: Path) -> None:
+    run("scan", "--simulate", str(ground_gpio18))
+    run("review", "accept", "--all")
+    assert project.load_circuit().serial is None
