@@ -25,6 +25,8 @@ from benchlog.vision.objects import BoardObject
 _TERMINAL_COLUMNS = "ABCDEFGHIJ"
 _ESP32_COLUMNS = (("A", "H"), ("B", "I"), ("C", "J"))
 TIP_REACH_PITCH = 0.9  # a tip farther than this from any hole isn't plugged in
+HOUSING_SEARCH_PITCH = 1.5  # look this far from a tip for a loose jumper's plug housing
+HOUSING_RATIO = 1.4  # thicker than this times the wire's typical thickness: a housing
 
 _TWO_LEGS = {
     ComponentType.LED.value: ("anode", "cathode"),
@@ -42,7 +44,7 @@ def features(obj: BoardObject) -> PartFeatures:
     return PartFeatures(
         length_mm=obj.length_mm, width_mm=obj.width_mm, area_mm2=obj.area_mm2,
         body_length_mm=obj.body_length_mm, body_width_mm=obj.body_width_mm, body_color=obj.body_color,
-        body_saturation=obj.body_saturation, body_value=obj.body_value,
+        body_saturation=obj.body_saturation, body_value=obj.body_value, saturation=obj.saturation,
     )  # fmt: skip
 
 
@@ -72,6 +74,27 @@ def _centre(obj: BoardObject) -> np.ndarray:
 def _axis(obj: BoardObject) -> np.ndarray:
     theta = np.deg2rad(obj.angle_deg)
     return np.array([np.cos(theta), np.sin(theta)])
+
+
+def _has_housing(obj: BoardObject, tip, pitch: float) -> bool:
+    """Is there a loose jumper's plug housing at this end (a blob clearly thicker than the wire)?
+
+    From above, the housing, its shadow and the wire's bend blur together, so the exact hole under
+    it can be one off: such ends are marked for the user to check rather than guessed harder.
+    """
+    x, y, w, h = cv2.boundingRect(obj.contour)
+    pad = 2
+    mask = np.zeros((h + 2 * pad, w + 2 * pad), np.uint8)
+    cv2.drawContours(mask, [obj.contour - [x - pad, y - pad]], -1, 255, -1)
+    thickness = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+    skeleton = cv2.ximgproc.thinning(mask) > 0
+    if not skeleton.any():
+        return False
+    typical = float(np.median(thickness[skeleton]))
+    local = np.asarray(tip, float) - [x - pad, y - pad]
+    ys, xs = np.nonzero(thickness)
+    near = np.hypot(xs - local[0], ys - local[1]) < HOUSING_SEARCH_PITCH * pitch
+    return bool(near.any()) and float(thickness[ys[near], xs[near]].max()) >= HOUSING_RATIO * typical
 
 
 def _axial_pins(obj: BoardObject, holes: _Holes, names: tuple[str, str]) -> dict[str, str] | None:
@@ -182,6 +205,7 @@ def recognize(cal: Calibration, objects: list[BoardObject], aligned: np.ndarray)
     """What each object is and where its pins are. Unrecognized objects are left out."""
     holes = _Holes(cal)
     guesses = []
+    halves: list[tuple[BoardObject, str]] = []
     for obj in objects:
         kind, confidence = classify(features(obj))
         if kind is None:
@@ -190,9 +214,15 @@ def recognize(cal: Calibration, objects: list[BoardObject], aligned: np.ndarray)
         if kind in _AXIAL:
             pins = _axial_pins(obj, holes, _AXIAL[kind])
             if pins is None:
+                if kind == WIRE:
+                    half = _half_wire(obj, holes)
+                    if half:
+                        halves.append(half)
                 continue
             if kind != WIRE:  # resistors and diodes are straight; wires can loop anywhere
                 pins = _straight_ends(obj, pins, cal)
+            else:
+                uncertain = [hole for hole, tip in zip(pins.values(), obj.endpoints) if _has_housing(obj, tip, holes.pitch)]
             if kind == ComponentType.DIODE.value:
                 uncertain = list(pins.values())  # which end is the cathode (band): check
         elif kind == ComponentType.ESP32_DEVKIT_V1_30.value:
@@ -220,4 +250,33 @@ def recognize(cal: Calibration, objects: list[BoardObject], aligned: np.ndarray)
         claims = sorted(set(obj.holes) | set(pins.values()))
         color = obj.color if kind == WIRE else None
         guesses.append(PartGuess(kind=kind, confidence=confidence, pins=pins, claims=claims, color=color, uncertain=uncertain))
+    return guesses + _join_halves(halves)
+
+
+def _half_wire(obj: BoardObject, holes: _Holes) -> tuple[BoardObject, str] | None:
+    """A wire piece with one end in a hole and the other running off the board (a loop outside
+    the board's edge is cut out of the outline). Returns (piece, the hole it's plugged into)."""
+    if len(obj.endpoints) != 2:
+        return None
+    reach = TIP_REACH_PITCH * holes.pitch
+    plugged = [holes.nearest(tip, within=reach) for tip in obj.endpoints]
+    if sum(p is not None for p in plugged) != 1:
+        return None
+    return obj, next(p for p in plugged if p)
+
+
+def _join_halves(halves: list[tuple[BoardObject, str]]) -> list[PartGuess]:
+    """Pair wire pieces of the same color into one wire between their plugged ends."""
+    guesses, left = [], list(halves)
+    while left:
+        obj, hole = left.pop(0)
+        mate = next((h for h in left if h[0].color == obj.color), None)
+        if mate is None:
+            continue  # a lone piece: its other end is hidden; leave it to the per-hole pairing
+        left.remove(mate)
+        claims = sorted(set(obj.holes) | set(mate[0].holes) | {hole, mate[1]})
+        guesses.append(PartGuess(
+            kind=WIRE, confidence=0.6, pins={"a": hole, "b": mate[1]}, claims=claims, color=obj.color,
+            uncertain=[hole, mate[1]],  # joined across the board's edge, with plug housings: check both ends
+        ))  # fmt: skip
     return guesses

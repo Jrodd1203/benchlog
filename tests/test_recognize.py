@@ -137,3 +137,27 @@ def test_anchor_esp32_from_the_cli(project: Project) -> None:
     assert result.exit_code == 0, result.output
     assert "added component esp32: esp32_devkit_v1_30, 30 pins" in result.output
     assert "check" not in result.output
+
+
+def test_vivid_wire_with_a_plug_housing_is_a_wire() -> None:
+    # A loose jumper piece: its thickest part is the dark plug housing, but it's red all along.
+    piece = PartFeatures(
+        length_mm=29.0, width_mm=6.4, area_mm2=60, body_length_mm=4.8, body_width_mm=3.8,
+        body_color="grey", body_saturation=30, body_value=80, saturation=153,
+    )  # fmt: skip
+    assert classify(piece)[0] == "wire"
+    # A diode has the same kind of dark body and legs, but it's colourless overall.
+    assert classify(piece.model_copy(update={"saturation": 13}))[0] == "diode"
+
+
+def test_wire_pieces_cut_by_the_board_edge_are_joined() -> None:
+    from types import SimpleNamespace
+
+    from benchlog.vision.parts import _join_halves
+
+    left = SimpleNamespace(color="red", holes=["G32", "H32"])
+    right = SimpleNamespace(color="red", holes=["G42"])
+    other = SimpleNamespace(color="green", holes=["A5"])
+    [wire] = _join_halves([(left, "G32"), (other, "A5"), (right, "G42")])
+    assert (wire.kind, wire.pins, wire.uncertain) == ("wire", {"a": "G32", "b": "G42"}, ["G32", "G42"])
+    assert set(wire.claims) == {"G32", "H32", "G42"}

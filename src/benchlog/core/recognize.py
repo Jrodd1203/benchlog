@@ -36,6 +36,7 @@ class PartFeatures(BaseModel):
     body_color: str
     body_saturation: float
     body_value: float
+    saturation: float = 0.0  # of the whole object: jumper insulation is vivid all along
 
 
 class PartGuess(BaseModel):
@@ -64,6 +65,9 @@ def classify(f: PartFeatures) -> tuple[str | None, float]:
     # A wire is long and the same thickness all along (no body bulge), flat or looping.
     if f.length_mm >= 12 and f.body_width_mm <= 4.5 and not legs:
         return WIRE, 0.8
+    # ...or long and vividly colored all along, even if its plug housing makes one end look thick.
+    if f.length_mm >= 12 and f.saturation >= 90 and f.body_width_mm <= 5.5:
+        return WIRE, 0.75
     if legs and 4 <= f.body_length_mm <= 12 and f.body_width_mm <= 4.5:
         if colored and not dark:
             return ComponentType.RESISTOR.value, 0.7
