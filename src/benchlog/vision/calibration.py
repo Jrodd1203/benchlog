@@ -56,6 +56,12 @@ PATCH_ROUNDS = 3
 MIN_PATCHES = 8
 MIN_PATCH_RESPONSE = 0.05  # phase-correlation peak strength below this means the patch can't be trusted
 MAX_PATCH_RESIDUAL_PX = 1.5  # median leftover misalignment allowed after correction
+# Parts on the board (an ESP32 covers a quarter of it) are left out of the alignment: regions that
+# differ from the reference by this much after blurring away the hole grid, so a slip of a hole or
+# two doesn't count, only something covering the board.
+OCCLUDER_BLUR_PITCH = 1.5
+OCCLUDER_DIFF = 40.0  # grey levels
+MAX_COVERED_FRACTION = 0.5  # of the board; with more covered, there's too little left to align on
 
 # Classification
 BLUR_SIGMA = 1.0
@@ -313,6 +319,7 @@ class Calibration:
 class Tracking:
     matrix: np.ndarray  # 3x3 homography (a 2x3 rotation+shift is accepted too): reference -> current frame
     correlation: float
+    covered: float = 0.0  # fraction of the board left out of the alignment because something covers it
 
     def __post_init__(self) -> None:
         m = np.asarray(self.matrix, dtype=np.float64)
@@ -347,10 +354,18 @@ def _gray(img: np.ndarray) -> np.ndarray:
 
 
 def _ecc(
-    cal: Calibration, ref_gray: np.ndarray, cur_gray: np.ndarray, start: np.ndarray, motion: int, scales: tuple[float, ...]
+    cal: Calibration,
+    ref_gray: np.ndarray,
+    cur_gray: np.ndarray,
+    start: np.ndarray,
+    motion: int,
+    scales: tuple[float, ...],
+    exclude: np.ndarray | None = None,
 ) -> tuple[np.ndarray, float]:
-    """Refine a starting 3x3 transform by aligning the images, coarse to fine."""
+    """Refine a starting 3x3 transform by aligning the images, coarse to fine (ignoring `exclude`)."""
     mask = cv2.dilate(_board_mask(ref_gray.shape, cal.corners), np.ones((15, 15), np.uint8))
+    if exclude is not None:
+        mask[exclude] = 0
     criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 100, 1e-6)
     matrix, correlation = np.float64(start), 0.0
     for scale in scales:
@@ -369,6 +384,24 @@ def _ecc(
     return matrix, float(correlation)
 
 
+def _occluders(cal: Calibration, ref_gray: np.ndarray, cur_gray: np.ndarray, matrix: np.ndarray) -> tuple[np.ndarray, float]:
+    """What covers the board, if it sits roughly at `matrix`: (mask in reference coords, fraction of the board).
+
+    Blurring over a couple of hole pitches hides the hole grid, so being off by a hole or two
+    barely registers; a part covering the board (dark on white, or bright on a dark wire) does.
+    """
+    h, w = ref_gray.shape
+    aligned = cv2.warpPerspective(cur_gray, matrix, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP)
+    pitch = hole_pitch_px(cal.holes)
+    sigma = OCCLUDER_BLUR_PITCH * pitch
+    diff = np.abs(cv2.GaussianBlur(ref_gray, (0, 0), sigma) - cv2.GaussianBlur(aligned, (0, 0), sigma))
+    grow = max(3, round(2 * pitch))
+    covered = cv2.dilate(np.uint8(diff > OCCLUDER_DIFF), np.ones((grow, grow), np.uint8)).astype(bool)
+    board = _board_mask(ref_gray.shape, cal.corners) > 0
+    covered &= board
+    return covered, float(covered.sum() / max(board.sum(), 1))
+
+
 def _patch_centres(cal: Calibration) -> np.ndarray:
     """Points spread over the board (reference coords) where local alignment is measured."""
     c = np.float64(cal.corners)
@@ -380,7 +413,7 @@ def _patch_centres(cal: Calibration) -> np.ndarray:
 
 
 def _patch_shifts(
-    cal: Calibration, ref_gray: np.ndarray, cur_gray: np.ndarray, matrix: np.ndarray
+    cal: Calibration, ref_gray: np.ndarray, cur_gray: np.ndarray, matrix: np.ndarray, exclude: np.ndarray | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """Leftover misalignment at each patch after aligning with `matrix`: (patch centres, shifts).
 
@@ -397,6 +430,8 @@ def _patch_shifts(
         xi, yi = round(x), round(y)
         if xi - size < 0 or yi - size < 0 or xi + size > w or yi + size > h:
             continue
+        if exclude is not None and exclude[yi - size : yi + size, xi - size : xi + size].mean() > 0.25:
+            continue  # mostly under a part: it doesn't look like the reference
         ref_patch = ref_gray[yi - size : yi + size, xi - size : xi + size]
         cur_patch = aligned[yi - size : yi + size, xi - size : xi + size]
         (dx, dy), response = cv2.phaseCorrelate(ref_patch, cur_patch, window)
@@ -407,7 +442,7 @@ def _patch_shifts(
 
 
 def _patch_refine(
-    cal: Calibration, ref_gray: np.ndarray, cur_gray: np.ndarray, start: np.ndarray
+    cal: Calibration, ref_gray: np.ndarray, cur_gray: np.ndarray, start: np.ndarray, exclude: np.ndarray | None = None
 ) -> tuple[np.ndarray, float] | None:
     """Correct `start` (a rotation + shift) for perspective, from the patches' leftover shifts.
 
@@ -417,7 +452,7 @@ def _patch_refine(
     pitch = hole_pitch_px(cal.holes)
     matrix = np.float64(start)
     for _ in range(PATCH_ROUNDS):
-        centres, shifts = _patch_shifts(cal, ref_gray, cur_gray, matrix)
+        centres, shifts = _patch_shifts(cal, ref_gray, cur_gray, matrix, exclude)
         keep = np.hypot(*shifts.T) < 1.5 * pitch if len(shifts) else np.zeros(0, bool)
         if keep.sum() < MIN_PATCHES:
             return None
@@ -427,7 +462,7 @@ def _patch_refine(
         if found is None:
             return None
         matrix = found
-    _, shifts = _patch_shifts(cal, ref_gray, cur_gray, matrix)
+    _, shifts = _patch_shifts(cal, ref_gray, cur_gray, matrix, exclude)
     if len(shifts) < MIN_PATCHES:
         return None
     return matrix, float(np.median(np.hypot(*shifts.T)))
@@ -465,6 +500,8 @@ def track(cal: Calibration, frame: np.ndarray, start: np.ndarray | None = None) 
     identity = np.eye(3)
     starts = ([Tracking(start, 0).matrix] if start is not None else []) + [identity, None]
     best: Tracking | None = None
+    best_exclude: np.ndarray | None = None
+    too_covered = False
     for candidate in starts:
         if candidate is None:
             outline = _outline_estimate(cal, frame)  # only computed if the others didn't lock
@@ -475,17 +512,32 @@ def track(cal: Calibration, frame: np.ndarray, start: np.ndarray | None = None) 
         angle = np.arctan2(candidate[1, 0], candidate[0, 0])
         c, si = np.cos(angle), np.sin(angle)
         rigid = np.array([[c, -si, candidate[0, 2]], [si, c, candidate[1, 2]], [0, 0, 1]])
+        tries: list[tuple[np.ndarray, float, float, np.ndarray | None]] = []
         try:
-            matrix, correlation = _ecc(cal, ref_gray, cur_gray, rigid, cv2.MOTION_EUCLIDEAN, _ECC_SCALES)
+            tries.append((*_ecc(cal, ref_gray, cur_gray, rigid, cv2.MOTION_EUCLIDEAN, _ECC_SCALES), 0.0, None))
         except cv2.error:
-            continue
-        if best is None or correlation > best.correlation:
-            best = Tracking(matrix=matrix, correlation=correlation)
-        if correlation >= GOOD_TRACKING_CORRELATION:
+            pass
+        if not tries or tries[0][1] < GOOD_TRACKING_CORRELATION:
+            # Something may be covering part of the board: align on the rest.
+            exclude, covered = _occluders(cal, ref_gray, cur_gray, rigid)
+            too_covered |= covered > MAX_COVERED_FRACTION
+            if 0 < covered <= MAX_COVERED_FRACTION:
+                try:
+                    matrix, correlation = _ecc(cal, ref_gray, cur_gray, rigid, cv2.MOTION_EUCLIDEAN, _ECC_SCALES, exclude)
+                    tries.append((matrix, correlation, covered, exclude))
+                except cv2.error:
+                    pass
+        for matrix, correlation, covered, exclude in tries:
+            if best is None or correlation > best.correlation:
+                best = Tracking(matrix=matrix, correlation=correlation, covered=covered)
+                best_exclude = exclude
+        if best is not None and best.correlation >= GOOD_TRACKING_CORRELATION:
             break
 
     if best is None or best.correlation < MIN_TRACKING_CORRELATION:
         match = f" (match {best.correlation:.2f})" if best else ""
+        if too_covered:
+            raise CalibrationError(f"can't lock onto the board{match}: more than half of it is covered")
         raise CalibrationError(
             f"can't lock onto the board{match}; check nothing is covering it, or run `benchlog camera calibrate`"
         )
@@ -493,13 +545,13 @@ def track(cal: Calibration, frame: np.ndarray, start: np.ndarray | None = None) 
     if best.shift_px > MAX_TRACKED_MOVE_FRACTION * board_w:
         raise CalibrationError("the board moved too far since calibration; run `benchlog camera calibrate`")
 
-    refined = _patch_refine(cal, ref_gray, cur_gray, best.matrix)
+    refined = _patch_refine(cal, ref_gray, cur_gray, best.matrix, best_exclude)
     if refined is None or refined[1] > MAX_PATCH_RESIDUAL_PX:
         raise CalibrationError(
             "can't line the board up with the calibration precisely (something covering it, or the camera "
             "moved?); scan again, or run `benchlog camera calibrate`"
         )
-    return Tracking(matrix=refined[0], correlation=best.correlation)
+    return Tracking(matrix=refined[0], correlation=best.correlation, covered=best.covered)
 
 
 # ── Classification ────────────────────────────────────────────────────────────
