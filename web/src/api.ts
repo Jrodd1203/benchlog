@@ -42,10 +42,25 @@ export class ApiError extends Error {
   }
 }
 
+// The open project (its id from GET/POST /api/projects), sent as `?project=` on every request so
+// the backend's `get_project()` resolves the right folder under PROJECTS_ROOT. Null means "the
+// single project `benchlog serve` was started in" (its BENCHLOG_PROJECT/cwd fallback).
+let activeProjectId: string | null = null
+
+export function setActiveProject(id: string | null): void {
+  activeProjectId = id
+}
+
+function withProject(path: string): string {
+  if (activeProjectId === null) return path
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}project=${encodeURIComponent(activeProjectId)}`
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response
   try {
-    res = await fetch(path, {
+    res = await fetch(withProject(path), {
       method,
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -252,13 +267,70 @@ function describeChanges(prev: Circuit, curr: Circuit): { lines: string[]; elect
   return { lines, electrical }
 }
 
-// ── NOT WIRED: no backend endpoint yet (Person 1: project list/create/open) ──────────────────
+// ── Projects ─────────────────────────────────────────────────────────────────────────────────
+//
+// GET/POST /api/projects create real project folders (a git repo each, same layout as
+// `benchlog init`) under the server's PROJECTS_ROOT. When the backend isn't reachable at all
+// (or is an older build without these routes), we fall back to a browser-local placeholder list
+// so the UI still works standalone.
 
 const PLACEHOLDER_PROJECTS: ProjectSummary[] = [
   { id: 'demo', name: 'ESP32 pot demo', board: 'bb830', updated: null, setupComplete: true },
 ]
 
-/** NOT WIRED: needs GET /api/projects. Returns a placeholder list. */
+const LOCAL_PROJECTS_KEY = 'benchlog:local-projects'
+
+function loadLocalProjects(): ProjectSummary[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_PROJECTS_KEY)
+    return raw ? (JSON.parse(raw) as ProjectSummary[]) : []
+  } catch {
+    return []
+  }
+}
+
+function saveLocalProjects(projects: ProjectSummary[]) {
+  try {
+    localStorage.setItem(LOCAL_PROJECTS_KEY, JSON.stringify(projects))
+  } catch {
+    // storage unavailable (private window); new project still shows for this session
+  }
+}
+
+function noBackend(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 0 || err.status === 404)
+}
+
+/** The real project list (GET /api/projects), or the placeholder + local ones when it's unreachable. */
 export async function listProjects(): Promise<ProjectSummary[]> {
-  return PLACEHOLDER_PROJECTS
+  try {
+    return await getJson<ProjectSummary[]>('/api/projects')
+  } catch (err) {
+    if (!noBackend(err)) throw err
+    return [...PLACEHOLDER_PROJECTS, ...loadLocalProjects()]
+  }
+}
+
+/**
+ * Creates a real project folder + git repo (POST /api/projects). Falls back to this browser's
+ * localStorage only when there's no backend to talk to.
+ */
+export async function createProject(input: { name: string; board: string }): Promise<ProjectSummary> {
+  try {
+    return await request<ProjectSummary>('POST', '/api/projects', input)
+  } catch (err) {
+    // Only fall back to local storage when there's no backend to talk to (network failure, or the
+    // route doesn't exist yet). A real error from an existing endpoint (validation failure, 500,
+    // etc.) must surface to the user instead of being silently treated as success.
+    if (!noBackend(err)) throw err
+    const project: ProjectSummary = {
+      id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: input.name,
+      board: input.board,
+      updated: null,
+      setupComplete: false,
+    }
+    saveLocalProjects([...loadLocalProjects(), project])
+    return project
+  }
 }
