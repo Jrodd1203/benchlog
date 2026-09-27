@@ -161,3 +161,16 @@ def test_wire_pieces_cut_by_the_board_edge_are_joined() -> None:
     [wire] = _join_halves([(left, "G32"), (other, "A5"), (right, "G42")])
     assert (wire.kind, wire.pins, wire.uncertain) == ("wire", {"a": "G32", "b": "G42"}, ["G32", "G42"])
     assert set(wire.claims) == {"G32", "H32", "G42"}
+
+
+def test_close_calls_between_two_holes_are_flagged() -> None:
+    pytest.importorskip("cv2")
+    from types import SimpleNamespace
+
+    from benchlog.vision.parts import _Holes
+
+    cal = SimpleNamespace(holes={"G32": (100.0, 100.0), "H32": (100.0, 120.0), "A1": (0.0, 0.0), "A2": (20.0, 0.0), "B1": (0.0, 20.0)})
+    holes = _Holes(cal)
+    assert not holes.ambiguous((100, 102))  # right on G32
+    assert holes.ambiguous((100, 108.6))  # 0.43 of a hole from G32, 0.57 from H32: can't tell
+    assert not holes.ambiguous((100, 104))

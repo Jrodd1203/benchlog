@@ -25,6 +25,8 @@ from benchlog.vision.objects import BoardObject
 _TERMINAL_COLUMNS = "ABCDEFGHIJ"
 _ESP32_COLUMNS = (("A", "H"), ("B", "I"), ("C", "J"))
 TIP_REACH_PITCH = 0.9  # a tip farther than this from any hole isn't plugged in
+AMBIGUOUS_TIP_PITCH = 0.3  # a tip this far from its nearest hole...
+AMBIGUOUS_RATIO = 1.6  # ...with the next hole less than this much farther away: a close call, to check
 HOUSING_SEARCH_PITCH = 1.5  # look this far from a tip for a loose jumper's plug housing
 HOUSING_RATIO = 1.4  # thicker than this times the wire's typical thickness: a housing
 
@@ -55,6 +57,12 @@ class _Holes:
         ]
         self.xy = np.array([cal.holes[n] for n in self.names])
         self.pitch = hole_pitch_px(cal.holes)
+
+    def ambiguous(self, point) -> bool:
+        """Is `point` nearly as close to a second hole as to the nearest one (a wire curling into
+        a hole, say)? Then the camera can't tell which it went into."""
+        d = np.sort(np.linalg.norm(self.xy - np.asarray(point, float), axis=1))[:2]
+        return d[0] > AMBIGUOUS_TIP_PITCH * self.pitch and d[1] < AMBIGUOUS_RATIO * d[0]
 
     def nearest(self, point, exclude: set[str] = frozenset(), within: float | None = None) -> str | None:
         d = np.linalg.norm(self.xy - np.asarray(point, float), axis=1)
@@ -97,7 +105,8 @@ def _has_housing(obj: BoardObject, tip, pitch: float) -> bool:
     return bool(near.any()) and float(thickness[ys[near], xs[near]].max()) >= HOUSING_RATIO * typical
 
 
-def _axial_pins(obj: BoardObject, holes: _Holes, names: tuple[str, str]) -> dict[str, str] | None:
+def _axial_pins(obj: BoardObject, holes: _Holes, names: tuple[str, str]) -> tuple[dict[str, str], list[str]] | None:
+    """The two ends' holes, and which pins are a close call between two holes (to check)."""
     if len(obj.endpoints) != 2:
         return None
     reach = TIP_REACH_PITCH * holes.pitch
@@ -105,7 +114,8 @@ def _axial_pins(obj: BoardObject, holes: _Holes, names: tuple[str, str]) -> dict
     second = holes.nearest(obj.endpoints[1], exclude={first} if first else set(), within=reach)
     if not first or not second:
         return None
-    return {names[0]: first, names[1]: second}
+    close_calls = [name for name, tip in zip(names, obj.endpoints) if holes.ambiguous(tip)]
+    return {names[0]: first, names[1]: second}, close_calls
 
 
 def _step(hole: str, along_rows: bool, steps: int, cal: Calibration) -> str | None:
@@ -212,7 +222,8 @@ def recognize(cal: Calibration, objects: list[BoardObject], aligned: np.ndarray)
             continue
         uncertain: list[str] = []
         if kind in _AXIAL:
-            pins = _axial_pins(obj, holes, _AXIAL[kind])
+            found = _axial_pins(obj, holes, _AXIAL[kind])
+            pins, close_calls = found if found else (None, [])
             if pins is None:
                 if kind == WIRE:
                     half = _half_wire(obj, holes)
@@ -223,6 +234,7 @@ def recognize(cal: Calibration, objects: list[BoardObject], aligned: np.ndarray)
                 pins = _straight_ends(obj, pins, cal)
             else:
                 uncertain = [hole for hole, tip in zip(pins.values(), obj.endpoints) if _has_housing(obj, tip, holes.pitch)]
+            uncertain = sorted(set(uncertain) | {pins[name] for name in close_calls})  # after straightening
             if kind == ComponentType.DIODE.value:
                 uncertain = list(pins.values())  # which end is the cathode (band): check
         elif kind == ComponentType.ESP32_DEVKIT_V1_30.value:
