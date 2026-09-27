@@ -19,6 +19,7 @@ from benchlog.core.diff import CircuitDiff, describe
 from benchlog.core.diff import diff as circuit_diff
 from benchlog.core.models import Circuit, Observation, ObservationKind
 from benchlog.core.project import CIRCUIT_PATH, HardwareCheck, Project, ProjectError
+from benchlog.demo import DEFAULT_WORKSPACE
 from benchlog.core.repo import GitError
 from benchlog.camera import load_calibration, read_board
 from benchlog.core.reconcile import Reconciliation
@@ -767,6 +768,25 @@ def schema(output: Path | None = typer.Option(None, "-o", "--output", help="Writ
         typer.echo(text, nl=False)
 
 
+demo_app = typer.Typer(help="Demo projects to browse in the UI.")
+app.add_typer(demo_app, name="demo")
+
+
+@demo_app.command("seed")
+@_handle_errors
+def demo_seed(
+    workspace: Path = typer.Option(DEFAULT_WORKSPACE, "--dir", help="Projects folder to create them in."),
+    reset: bool = typer.Option(False, "--reset", help="Rebuild demo projects that already exist."),
+) -> None:
+    """Create demo projects with history, branches and PRs (real git repos, safe to explore)."""
+    from benchlog.demo import seed
+
+    for demo, path, what in seed(workspace.expanduser().resolve(), reset=reset):
+        color = "green" if what == "created" else "yellow"
+        print(f"[{color}]{escape(demo.folder)}[/{color}]: {escape(what)}  [dim]{escape(str(path))}[/dim]")
+    print("browse them in the UI: `benchlog serve` (the projects screen lists this folder)")
+
+
 @app.command()
 @_handle_errors
 def serve(
@@ -776,6 +796,9 @@ def serve(
     ),
     project_dir: Path | None = typer.Option(
         None, "--project", help="benchlog project to serve (default: the one containing the current folder)."
+    ),
+    workspace: Path = typer.Option(
+        DEFAULT_WORKSPACE, help="Projects folder the UI can browse and open (see `benchlog demo seed`)."
     ),
     reload: bool = typer.Option(
         False, "--reload/--no-reload", help="Restart when benchlog's code changes (development; drops the ESP32 link)."
@@ -790,11 +813,22 @@ def serve(
 
     import benchlog
 
-    project = Project.find(project_dir.resolve() if project_dir else None)
-    # The app finds the project per request through this, in this process and in reload workers.
+    workspace = workspace.expanduser().resolve()
+    try:
+        project = Project.find(project_dir.resolve() if project_dir else None)
+    except ProjectError:
+        # Not inside a project: open the first one in the projects folder, if there is one.
+        found = sorted(p for p in workspace.glob(f"*/{CIRCUIT_PATH}")) if not project_dir and workspace.is_dir() else []
+        if not found:
+            raise
+        project = Project.find(found[0].parent.parent)
+    # The app finds the project per request through these, in this process and in reload workers.
     os.environ["BENCHLOG_PROJECT"] = str(project.repo.root)
+    os.environ["BENCHLOG_WORKSPACE"] = str(workspace)
     shown = "localhost" if host in ("127.0.0.1", "localhost") else host
     print(f"serving [bold]{escape(str(project.repo.root))}[/bold] at http://{shown}:{port} (API docs: /docs)")
+    if workspace.is_dir():
+        print(f"[dim]projects folder: {escape(str(workspace))}[/dim]")
     if host not in ("127.0.0.1", "localhost", "::1"):
         print("[yellow]warning:[/yellow] reachable from other devices on this network, with no login")
     uvicorn.run(

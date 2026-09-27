@@ -66,7 +66,7 @@ def test_project_host_and_reload(project: Project, started: dict, tmp_path: Path
 
 def test_not_a_project(tmp_path: Path, started: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    result = runner.invoke(app, ["serve"])
+    result = runner.invoke(app, ["serve", "--workspace", str(tmp_path / "no-projects")])
     assert result.exit_code == 1
     assert "benchlog init" in result.output
     assert not started  # never started a server that can't serve anything

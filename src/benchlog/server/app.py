@@ -5,12 +5,11 @@ behave the same. Run it from inside a project with `benchlog serve`, or point it
 the BENCHLOG_PROJECT environment variable.
 """
 
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -28,6 +27,8 @@ from benchlog.server.branch_routes import router as branch_router
 from benchlog.server.check_routes import router as check_router
 from benchlog.server.pr_routes import not_found as pr_not_found
 from benchlog.server.pr_routes import router as pr_router
+from benchlog.server.project_routes import router as project_router
+from benchlog.server.deps import ProjectDep
 from benchlog.server.serial_routes import router as serial_router
 from benchlog.server.serial_routes import serial_service
 
@@ -44,6 +45,7 @@ app.include_router(serial_router)
 app.include_router(check_router)
 app.include_router(branch_router)
 app.include_router(pr_router)
+app.include_router(project_router)
 app.add_exception_handler(PRNotFound, pr_not_found)
 
 
@@ -53,12 +55,6 @@ async def _user_error(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
-def get_project() -> Project:
-    start = os.environ.get("BENCHLOG_PROJECT")
-    return Project.find(Path(start) if start else None)
-
-
-ProjectDep = Annotated[Project, Depends(get_project)]
 
 
 def _circuit_at(project: Project, rev: str) -> Circuit:

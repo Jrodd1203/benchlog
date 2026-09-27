@@ -46,6 +46,24 @@ benchlog serve --reload                # restart on code changes while developin
 
 Auto-reload is off by default: a restart also drops the ESP32 connection.
 
+### Demo projects
+
+```sh
+benchlog demo seed            # creates ~/benchlog-projects/{pot-led,weather-station,led-bar}
+benchlog serve                # from anywhere: the UI's projects screen lists that folder
+```
+
+Real git repos with a few days of history, built with the same code as everything else, so every
+screen works on them:
+
+- **pot-led**: the demo circuit; branch `move-sensor` has an open PR that **fails** its checks
+  (the pot moved onto GPIO12, a strapping pin), so it can't be merged
+- **weather-station**: ESP32 + BME280 over I2C; the wiring came in through a PR, tested and merged
+- **led-bar**: three LEDs; branch `third-led` has an open PR that passes and is ready to merge
+
+`--dir` picks another folder, `--reset` rebuilds them (only folders it generated). The API lists
+projects at `GET /api/projects` and switches with `POST /api/projects/{id}/open`.
+
 ## Scanning from the bench camera
 
 Mount a webcam or an iPhone (Continuity Camera, see below) pointing straight down at the board.
