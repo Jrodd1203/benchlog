@@ -56,10 +56,6 @@
   }
 }
 
-/* Kill the grid texture when the board is the only thing that matters */
-body:has(.app[data-screen='timeline']) {
-  background-image: none;
-}
 
 * {
   box-sizing: border-box;

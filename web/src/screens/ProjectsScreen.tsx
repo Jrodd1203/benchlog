@@ -144,15 +144,21 @@ function WorkflowSection() {
 }
 
 const COMMANDS = [
-  { name: 'init',    desc: 'Create a benchlog project in the current git repo' },
-  { name: 'scan',    desc: 'Read the board with the camera; detect wire changes' },
-  { name: 'review',  desc: 'Interactively accept or reject each detected change' },
-  { name: 'status',  desc: 'Show the current circuit vs the last commit' },
-  { name: 'diff',    desc: 'Show changes between two commits (or HEAD vs last)' },
-  { name: 'commit',  desc: 'Save the current circuit + firmware as a new commit' },
-  { name: 'log',     desc: 'List commits with their circuit change summary' },
-  { name: 'check',   desc: 'Run electrical safety checks on the current circuit' },
-  { name: 'camera',  desc: 'Manage camera selection and calibration' },
+  { name: 'init',     desc: 'Create a benchlog project in the current git repo' },
+  { name: 'scan',     desc: 'Read the board with the camera; detect wire changes' },
+  { name: 'review',   desc: 'Interactively accept or reject each detected change' },
+  { name: 'status',   desc: 'Show the current circuit vs the last commit' },
+  { name: 'diff',     desc: 'Show changes between two commits (or HEAD vs last)' },
+  { name: 'commit',   desc: 'Save the current circuit + firmware as a new commit' },
+  { name: 'log',      desc: 'List commits with their circuit change summary' },
+  { name: 'check',    desc: 'Run electrical safety checks on the current circuit' },
+  { name: 'branch',   desc: 'List branches, or create one at HEAD' },
+  { name: 'checkout', desc: 'Switch to a branch; shows rewiring steps if the board differs' },
+  { name: 'board',    desc: 'Does the physical board match the checked-out circuit?' },
+  { name: 'pr',       desc: 'Local pull requests: compare a branch with main, check it, merge it' },
+  { name: 'camera',   desc: 'Manage camera selection and calibration' },
+  { name: 'serial',   desc: 'Set up the ESP32 serial agent that double-checks what the camera sees' },
+  { name: 'serve',    desc: 'Start the local API for the web UI' },
 ]
 
 function CommandsSection() {

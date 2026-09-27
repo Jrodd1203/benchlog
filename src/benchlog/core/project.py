@@ -11,6 +11,7 @@
     .benchlog/board_state.json   gitignored: the last commit the physical board matched
     .benchlog/prs/               gitignored: pull request pointers (see core/prs.py)
     .benchlog/checks/            gitignored: check reports, one per commit
+    .benchlog/checkpoints.json   gitignored: build-guide annotations (see core/checkpoints.py)
 """
 
 import json
@@ -22,6 +23,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from benchlog.core.board import TEMPLATES
 from benchlog.core.board_state import BoardStateStore, fingerprint
+from benchlog.core.checkpoints import CheckpointStore
 from benchlog.core.models import Circuit, ComponentType, Hole, Observation, ObservationKind, ObservationStatus, Suggestion
 from benchlog.core.pairing import apply_observations
 from benchlog.core.reconcile import Reconciliation, SerialReadings, reconcile, serial_record
@@ -65,6 +67,7 @@ class Project:
         self.calibration_dir = repo.root / CALIBRATION_DIR
         self.state_dir = repo.root / STATE_DIR
         self.board_state = BoardStateStore(self.state_dir)
+        self.checkpoints = CheckpointStore(self.state_dir)
         self.serial_readings_path = self.scans.dir / "serial.json"
 
     @classmethod

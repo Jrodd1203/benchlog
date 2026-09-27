@@ -76,9 +76,10 @@ export async function request<T>(method: string, path: string, body?: unknown): 
     } catch {
       // not JSON (e.g. the dev proxy's 502 page); keep the generic message
     }
-    if (res.status === 502 || res.status === 504) detail = 'Can’t reach the benchlog server. Is `benchlog serve` running?'
+    if (res.status === 502 || res.status === 504) detail = "Can’t reach the benchlog server. Is `benchlog serve` running?"
     throw new ApiError(res.status, detail)
   }
+  if (res.status === 204 || res.status === 205) return undefined as T
   return (await res.json()) as T
 }
 
@@ -189,6 +190,7 @@ export function getLastScan(): ScanResponse | null {
 interface HistoryEntryResponse {
   commit: { sha: string; short_sha: string; author: string; date: string; subject: string }
   lines: string[]
+  checkpoint?: { label: string; note?: string }
 }
 
 const circuitCache = new Map<string, Circuit>()
@@ -201,7 +203,7 @@ export async function getTimeline(): Promise<Loaded<TimelineEntry[]>> {
   try {
     const history = await getJson<HistoryEntryResponse[]>('/api/history')
     if (history.length === 0) throw new Error('no commits yet')
-    const entries = history.reverse().map(({ commit, lines }) => ({
+    const entries = history.reverse().map(({ commit, lines, checkpoint }) => ({
       sha: commit.sha,
       shortSha: commit.short_sha,
       message: commit.subject,
@@ -209,6 +211,7 @@ export async function getTimeline(): Promise<Loaded<TimelineEntry[]>> {
       date: commit.date,
       lines,
       electrical: lines.some((l) => /\bconnected\b|\bdisconnected\b/.test(l)),
+      checkpoint: checkpoint ?? undefined,
     }))
     return { data: entries, source: 'api' }
   } catch {
@@ -351,4 +354,14 @@ export async function createProject(input: { name: string; board: string }): Pro
     saveLocalProjects([...loadLocalProjects(), project])
     return project
   }
+}
+
+// ── Build guide / checkpoints ─────────────────────────────────────────────────────────────────
+
+export async function markCheckpoint(sha: string, label: string, note = ''): Promise<void> {
+  await request('POST', `/api/commits/${sha}/checkpoint`, { label, note })
+}
+
+export async function unmarkCheckpoint(sha: string): Promise<void> {
+  await request('DELETE', `/api/commits/${sha}/checkpoint`)
 }
