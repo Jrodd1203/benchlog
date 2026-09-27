@@ -98,7 +98,7 @@ def test_edit_validation(project: Project) -> None:
     simulate(EXAMPLES / "moved-wire.json")
     assert "not a hole" in fail("review", "edit", "obs1", "b=Z99")
     assert "ends are 'a' and 'b'" in fail("review", "edit", "obs1", "c=A5")
-    assert "END=HOLE" in fail("review", "edit", "obs1", "A5")
+    assert "KEY=VALUE" in fail("review", "edit", "obs1", "A5")
     # Correcting the camera's guess: the end actually went to A13.
     run("review", "edit", "obs1", "b=A13")
     run("review", "accept", "--all")

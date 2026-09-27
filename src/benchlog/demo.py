@@ -85,7 +85,7 @@ class _Builder:
 
     @contextmanager
     def _dated(self) -> Iterator[None]:
-        self.when += timedelta(hours=21, minutes=13)
+        self.when += timedelta(days=1, minutes=13)  # a new day per step, whatever the time now
         stamp = self.when.isoformat(timespec="seconds")
         env = {
             "GIT_AUTHOR_NAME": AUTHOR[0], "GIT_AUTHOR_EMAIL": AUTHOR[1],

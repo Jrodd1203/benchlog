@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { demoScan, getCircuit, getStatus, scan, type Loaded } from '../api'
 import { Breadboard } from '../board/Breadboard'
+import { ComponentIcon, componentLabel } from '../components/ComponentIcon'
 import { StatusLight } from '../components/StatusLight'
 import type { Circuit, StatusResponse } from '../types'
 
@@ -20,15 +21,9 @@ export function WorkspaceScreen({ onReview }: { onReview: () => void }) {
 
   useEffect(() => {
     let alive = true
-    Promise.all([getCircuit(), getStatus().catch(() => null)]).then(([c, s]) => {
-      if (!alive) return
-      setCircuit(c)
-      setStatus(s)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
+    refresh().then(() => { if (!alive) { setCircuit(null); setStatus(null) } })
+    return () => { alive = false }
+  }, [refresh])
 
   const runScan = async (demo: boolean) => {
     setScanning(true)
@@ -87,7 +82,7 @@ export function WorkspaceScreen({ onReview }: { onReview: () => void }) {
         </div>
       )}
 
-      <section className="board-area board-frame">{circuit && <Breadboard circuit={circuit.data} />}</section>
+      <section className="board-area board-frame" data-scanning={scanning ? '' : undefined}>{circuit && <Breadboard circuit={circuit.data} />}</section>
 
       <aside className="side-panel">
         <h2>Circuit</h2>
@@ -98,7 +93,20 @@ export function WorkspaceScreen({ onReview }: { onReview: () => void }) {
             <dt>Board</dt>
             <dd>{circuit.data.board.toUpperCase()}</dd>
             <dt>Parts</dt>
-            <dd>{circuit.data.components.map((c) => c.id).join(', ') || 'none'}</dd>
+            <dd>
+              {circuit.data.components.length === 0 ? (
+                <span className="muted">none</span>
+              ) : (
+                <ul className="component-icon-list">
+                  {circuit.data.components.map((c) => (
+                    <li key={c.id} className="component-icon-item" title={`${c.id} — ${c.value ?? componentLabel(c.type)}`}>
+                      <ComponentIcon type={c.type} size={28} />
+                      <span className="component-icon-label">{c.id}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </dd>
             <dt>Wires</dt>
             <dd>{circuit.data.wires.length}</dd>
             {status && (

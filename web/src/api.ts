@@ -57,7 +57,7 @@ function withProject(path: string): string {
   return `${path}${sep}project=${encodeURIComponent(activeProjectId)}`
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response
   try {
     res = await fetch(withProject(path), {
@@ -145,7 +145,9 @@ export const rejectObservations = (ids?: string[]) =>
 export const editObservation = (id: string, ends: Partial<Record<'a' | 'b', Hole>>) =>
   request<Observation>('PATCH', `/api/observations/${encodeURIComponent(id)}`, { ends })
 
-export const commit = (message: string) => request<CommitResponse>('POST', '/api/commit', { message })
+/** With `force`, commits even if the ESP32 check fails (recorded as "ESP32-Check: failed (forced)"). */
+export const commit = (message: string, force = false) =>
+  request<CommitResponse>('POST', '/api/commit', { message, force })
 
 /** GET /api/diff. Omit `old` for HEAD, omit `new` for the working circuit. */
 export function getDiff(old?: string, next?: string): Promise<DiffResponse> {
@@ -265,6 +267,22 @@ function describeChanges(prev: Circuit, curr: Circuit): { lines: string[]; elect
   }
   for (const id of prevWires.keys()) if (!curr.wires.some((w) => w.id === id)) lines.push(`${id} removed`)
   return { lines, electrical }
+}
+
+// ── Remote community circuits ─────────────────────────────────────────────────────────────────
+
+/** Fetch a circuit.json from a public GitHub repo (raw.githubusercontent.com). Returns null on failure. */
+export async function fetchRemoteCircuit(owner: string, repo: string): Promise<Circuit | null> {
+  try {
+    const url = `https://raw.githubusercontent.com/${owner}/${repo}/main/benchlog/circuit.json`
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const data = await res.json()
+    if (!data || typeof data !== 'object' || !('wires' in data) || !('components' in data)) return null
+    return data as Circuit
+  } catch {
+    return null
+  }
 }
 
 // ── Projects ─────────────────────────────────────────────────────────────────────────────────

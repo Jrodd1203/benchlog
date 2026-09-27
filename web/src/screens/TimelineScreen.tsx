@@ -80,9 +80,14 @@ export function TimelineScreen() {
         </div>
       )}
 
-      <div className="board-frame">{boards && <Breadboard circuit={boards.circuit} previous={boards.previous} />}</div>
+      <div className="board-frame" style={{ position: 'relative' }}>
+        {boards && <Breadboard circuit={boards.circuit} previous={boards.previous} />}
+        {entry.check === 'fail' && (
+          <div className="board-stamp fail" aria-hidden="true">CHECKS FAIL</div>
+        )}
+      </div>
 
-      <section className={`commit-info${entry.electrical ? ' electrical' : ''}`}>
+      <section className={`commit-info${entry.electrical ? ' electrical' : ''}${entry.check === 'fail' ? ' fail' : ''}`}>
         <div className="commit-head">
           <h2>{entry.message}</h2>
           <div className="commit-badges">

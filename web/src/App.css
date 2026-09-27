@@ -101,6 +101,10 @@
   justify-content: space-between;
 }
 
+.row.tight {
+  margin-top: 0;
+}
+
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -173,6 +177,18 @@
   border-style: dashed;
   cursor: not-allowed;
 }
+
+.btn.link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.87rem;
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.btn.link:hover { color: var(--text); }
 
 .soon-tag {
   font-size: 0.75rem;
@@ -322,6 +338,43 @@
 .project-card .chip {
   grid-column: 2;
   grid-row: 1 / span 2;
+}
+
+/* ── Explore (community showcase) ──────────────────────────────────────── */
+
+.explore-section {
+  margin-top: 2.5rem;
+}
+
+.explore-grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.explore-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.9rem 1.1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.explore-board {
+  width: 100%;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.explore-board svg {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 /* ── Tabs ──────────────────────────────────────────────────────────────── */
@@ -561,6 +614,22 @@ select:focus {
   align-self: start;
 }
 
+.board-area[data-scanning] { position: relative; overflow: hidden; }
+.board-area[data-scanning] .breadboard { opacity: 0.55; transition: opacity 0.3s; }
+.board-area[data-scanning]::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: -10px;
+  height: 10px;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--accent) 70%, transparent) 50%, transparent);
+  animation: scan-sweep 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes scan-sweep {
+  0%   { transform: translateY(0); }
+  100% { transform: translateY(100vh); }
+}
+
 .side-panel {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -584,6 +653,39 @@ select:focus {
 .facts dd {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+/* Component icons in the workspace sidebar */
+.component-icon-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+}
+
+.component-icon-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: default;
+}
+
+.component-icon-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+/* Component icon inline in review change-top row */
+.change-top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 /* ESP32 indicator: a panel-mount LED. */
@@ -1170,11 +1272,52 @@ select:focus {
   color: #62c07a;
   background: rgba(98, 192, 122, 0.12);
   border-color: #62c07a;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.75rem;
+  animation: badge-appear 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 [data-screen='timeline'] .badge.fail {
   color: #ef6a5f;
-  background: rgba(239, 106, 95, 0.15);
+  background: rgba(239, 106, 95, 0.22);
   border-color: #ef6a5f;
-  box-shadow: 0 0 8px rgba(239, 106, 95, 0.35);
+  box-shadow: 0 0 24px rgba(239, 106, 95, 0.7);
+  font-size: 0.9rem;
+  padding: 0.2rem 0.75rem;
+  animation: badge-appear 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes badge-appear {
+  from { transform: scale(0.7); opacity: 0; }
+}
+
+[data-screen='timeline'] .commit-info.fail {
+  border-left-color: #ef6a5f;
+}
+
+/* CHECKS FAIL stamp — film-rejection overlay on the board */
+.board-stamp {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-12deg);
+  font-family: var(--font-mono);
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  pointer-events: none;
+  user-select: none;
+}
+
+.board-stamp.fail {
+  font-size: clamp(1.5rem, 4vw, 2.8rem);
+  color: #ef6a5f;
+  opacity: 0.13;
+  border: 3px solid #ef6a5f;
+  padding: 0.35rem 1rem;
+  border-radius: 3px;
+  animation: stamp-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes stamp-in {
+  from { transform: translate(-50%, -50%) rotate(-22deg) scale(1.5); opacity: 0; }
 }

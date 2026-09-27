@@ -26,6 +26,11 @@ const PART_COLOR: Record<Component['type'], string> = {
   resistor: '#d97706',
   potentiometer: '#b45309',
   led: '#eab308',
+  capacitor_electrolytic: '#2563eb',
+  capacitor_ceramic: '#0891b2',
+  transistor_npn: '#374151',
+  diode: '#64748b',
+  i2c_module: '#16a34a',
 }
 const WIRE_COLOR: Record<string, string> = {
   red: '#dc2626',
@@ -83,6 +88,15 @@ export function Breadboard({
       removed: new Set([...before.keys()].filter((h) => !occupied.has(h))),
     }
   }, [occupied, previous])
+
+  // Ghost wire paths: wires from `previous` whose endpoints changed or that no longer exist.
+  const ghostWires = useMemo(() => {
+    if (!previous) return []
+    return previous.wires.filter((pw) => {
+      const cw = circuit.wires.find((w) => w.id === pw.id)
+      return !cw || cw.a !== pw.a || cw.b !== pw.b
+    })
+  }, [previous, circuit.wires])
 
   const channelY = (columnY('E') + columnY('F')) / 2
   const labelRows = [1, ...Array.from({ length: 12 }, (_, i) => (i + 1) * 5)]
@@ -147,6 +161,17 @@ export function Breadboard({
         {circuit.components.map((c) => (
           <PartBody key={c.id} part={c} />
         ))}
+
+        {/* ghost wire paths: dashed red traces showing where moved wires came from */}
+        {ghostWires.map((w) => {
+          const a = holePosition(w.a)
+          const b = holePosition(w.b)
+          if (!a || !b) return null
+          const mx = (a.x + b.x) / 2
+          const my = (a.y + b.y) / 2 - Math.max(Math.abs(a.x - b.x) * 0.12, 1.2)
+          const d = `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`
+          return <path key={`ghost-${w.id}`} className="bb-wire-ghost" d={d} />
+        })}
 
         {/* removed: red ghosts */}
         {[...removed].map((h) => {

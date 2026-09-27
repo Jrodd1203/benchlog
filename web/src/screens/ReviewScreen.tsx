@@ -9,6 +9,7 @@ import {
 } from '../api'
 import { Breadboard } from '../board/Breadboard'
 import { applyObservations, describeObservation } from '../board/observations'
+import { ComponentIcon } from '../components/ComponentIcon'
 import { FutureButton } from '../components/FutureButton'
 import type { Circuit, Hole, Observation, ProposalVerdict } from '../types'
 
@@ -146,7 +147,7 @@ export function ReviewScreen({ onCommit, onWorkspace }: { onCommit: () => void; 
       {picking && (
         <p className="notice pick">
           Click the hole where wire end <strong>{picking.end.toUpperCase()}</strong> really is.{' '}
-          <button type="button" className="link-btn" onClick={() => setPicking(null)}>
+          <button type="button" className="btn link" onClick={() => setPicking(null)}>
             Cancel
           </button>
         </p>
@@ -181,9 +182,13 @@ export function ReviewScreen({ onCommit, onWorkspace }: { onCommit: () => void; 
           {pending.map((o) => {
             const v = verdictLabel(verdicts.get(o.id))
             const message = verdicts.get(o.id)?.message
+            const compType = o.object_type === 'component'
+              ? circuit?.components.find((c) => c.id === o.object_id)?.type
+              : undefined
             return (
               <li key={o.id} className={`change ${o.kind}`}>
                 <div className="change-top">
+                  {compType && <ComponentIcon type={compType} size={24} />}
                   <span className={`kind ${o.kind}`}>{KIND_LABEL[o.kind]}</span>
                   <span className={`verdict ${v.tone}`}>{v.text}</span>
                 </div>

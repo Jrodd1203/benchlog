@@ -113,6 +113,15 @@ class ObservationStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class Suggestion(_Model):
+    """What a scan thinks an added component is. The camera can't read values, polarity or part
+    numbers, so the user fills those in (and can correct the type) before accepting."""
+
+    type: ComponentType | None = None
+    value: str | None = None
+    model: str | None = None
+
+
 class Observation(_Model):
     """One change a scan proposes relative to the last accepted circuit.
 
@@ -129,3 +138,4 @@ class Observation(_Model):
     confidence: float = Field(ge=0, le=1)
     uncertain_holes: list[Hole] = Field(default=[], description="Holes the user must confirm.")
     status: ObservationStatus = ObservationStatus.PENDING
+    suggested: Suggestion | None = Field(default=None, description="For added components: what the scan thinks it is.")
